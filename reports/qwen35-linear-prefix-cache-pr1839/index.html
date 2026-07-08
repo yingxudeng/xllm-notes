@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen3.5 Linear-State Prefix Cache 设计报告 · PR #1839</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+      --terra-soft: #f6e5df;
+      --code-bg: #f5f6f8;
+      --code-ink: #24304a;
+      --code-line: #dde2ec;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Serif for headings — a clear departure from all-sans */
+    h1, h2, h3, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    /* Dark sticky top bar */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--indigo-deep);
+      border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+    .brand a { color: #fff; }
+    .topbar .crumb { color: #aeb6d4; font-size: 13px; }
+    .topbar .crumb a { color: #aeb6d4; }
+
+    .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header {
+      padding: 44px 0 30px;
+      border-bottom: 2px solid var(--indigo-deep);
+    }
+    .eyebrow {
+      display: inline-block;
+      color: var(--terra);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+    .subtitle { max-width: 900px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 3px 11px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .tag.link { color: var(--indigo); border-color: #c2c8f0; background: #eef0fd; }
+
+    /* Horizontal sticky chip nav — replaces the left sidebar */
+    nav.toc {
+      position: sticky;
+      top: 55px;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 22px 0 30px;
+      padding: 12px 14px;
+      background: rgba(236, 239, 244, 0.92);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--line);
+      border-radius: 3px;
+    }
+    nav.toc a {
+      padding: 4px 11px;
+      border-radius: 2px;
+      color: var(--muted);
+      font-size: 13.5px;
+      font-weight: 600;
+    }
+    nav.toc a:hover { background: var(--indigo); color: #fff; text-decoration: none; }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative;
+      margin-bottom: 22px;
+      padding: 30px 30px 30px 34px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--indigo);
+      border-radius: 3px;
+      background: var(--surface);
+    }
+
+    h2 { margin: 0 0 16px; font-size: 25px; line-height: 1.28; color: var(--indigo-deep); }
+    h3 { margin: 24px 0 10px; font-size: 18px; line-height: 1.35; color: var(--terra); }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .metric {
+      min-height: 116px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--terra);
+      border-radius: 2px;
+      background: var(--surface-alt);
+    }
+    .metric strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--indigo);
+      font-size: 26px;
+      font-family: Georgia, serif;
+      line-height: 1.1;
+    }
+    .metric span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+    .callout {
+      margin: 18px 0;
+      padding: 15px 18px;
+      border: 1px solid #c2c8f0;
+      border-left: 4px solid var(--indigo);
+      border-radius: 2px;
+      background: #eef0fd;
+    }
+    .warning { border-color: #e6c9a8; border-left-color: var(--terra); background: var(--terra-soft); }
+    .danger { border-color: #e6b3b3; border-left-color: #b3261e; background: #fbe9e7; }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 3px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; background: var(--surface); }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+      font-size: 14px;
+    }
+    /* Dark header + zebra rows */
+    th { background: var(--indigo-deep); color: #fff; font-weight: 700; border-bottom: none; }
+    tbody tr:nth-child(even) { background: var(--surface-alt); }
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 2px;
+      background: #e8ebf3;
+      color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.9em;
+    }
+    /* Light code blocks with a border — not the dark terminal look */
+    pre {
+      overflow-x: auto;
+      margin: 16px 0;
+      padding: 18px;
+      border: 1px solid var(--code-line);
+      border-left: 3px solid var(--terra);
+      border-radius: 3px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+
+    .mermaid { border: 1px solid var(--line); border-radius: 3px; background: #fbfcfe; color: var(--ink); }
+    .architecture-diagram { min-height: 640px; padding: 16px; }
+    .architecture-diagram svg {
+      display: block;
+      width: min(100%, 1000px) !important;
+      max-width: none !important;
+      height: auto !important;
+      margin: 0 auto;
+    }
+    .sequence-diagram { min-height: 520px; padding: 16px; }
+    .sequence-diagram svg {
+      display: block;
+      width: max(100%, 900px) !important;
+      max-width: none !important;
+      height: auto !important;
+      margin: 0 auto;
+    }
+
+    .pill-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; }
+    .pill-list li {
+      margin: 0;
+      padding: 6px 11px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--surface-alt);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .panel {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--indigo);
+      border-radius: 2px;
+      background: var(--surface-alt);
+    }
+    .panel h3 { margin-top: 0; color: var(--indigo-deep); }
+
+    @media (max-width: 920px) {
+      nav.toc { position: static; }
+      .summary-grid, .two-col { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar, nav.toc { display: none; }
+      .page { max-width: none; padding: 0; }
+      section { break-inside: avoid; border-left-width: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><a href="../../">xLLM Notes</a></span>
+      <span class="crumb">/ reports / qwen35-linear-prefix-cache-pr1839</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Feature Design Report</div>
+      <h1>Qwen3.5 Linear-State Prefix Cache</h1>
+      <p class="subtitle">
+        为 Qwen3.5 GDN linear-attention 模型引入前缀缓存能力。本报告覆盖 recurrent state 为何不能照搬 KV 复用、checkpoint 索引设计、独立 hash 域、跨 leaf 复用编排,以及 worker 侧 restore 与并发正确性。
+      </p>
+      <div class="meta">
+        <span class="tag link"><a href="https://github.com/xLLM-AI/xllm/pull/1839">PR #1839</a></span>
+        <span class="tag">分支：feat/qwen35_prefix_cache_main_0628</span>
+        <span class="tag">改动：+3635 / −265，75 files</span>
+        <span class="tag">核心模块：framework/prefix_cache · block · kv_cache</span>
+        <span class="tag">状态：WIP</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#summary">执行摘要</a>
+      <a href="#problem">问题与约束</a>
+      <a href="#architecture">系统架构</a>
+      <a href="#hash">独立 Hash 域</a>
+      <a href="#workflow">核心工作流</a>
+      <a href="#apis">接口</a>
+      <a href="#concurrency">并发与正确性</a>
+      <a href="#testing">测试与验证</a>
+      <a href="#risks">风险</a>
+    </nav>
+
+    <main>
+        <section id="summary">
+          <h2>1. 执行摘要</h2>
+          <p>
+            xLLM 的前缀缓存原本只服务标准 KV attention:相同前缀的 token 可零拷贝共享物理 KV block。但 Qwen3.5 引入了 <strong>GDN(Gated Delta Net)linear-attention</strong> 层——以 9B 为例,32 层里有 24 层是 linear、8 层是 full attention。linear 层不保存逐 token 的 KV,而是维护一份<strong>被累积压缩的 recurrent state</strong>。这份 state 每步被 kernel 原地覆盖,无法像 KV 那样按 block 引用计数共享。
+          </p>
+          <p>
+            本 PR 为 linear-state 建立一套<strong>独立的 checkpoint 缓存</strong>:在稀疏的 prefill chunk 边界把当时的 recurrent state 提交为一个 checkpoint slot,新请求命中同前缀时,把最深的那个 checkpoint 拷回 live slot 作为热启动起点,从而跳过对已知前缀的重复 prefill。KV 与 linear 两条 leaf 各自维护缓存,由 CompositeBlockManager 统一编排复用长度。
+          </p>
+
+          <div class="summary-grid">
+            <div class="metric">
+              <strong>2</strong>
+              <span>两类 leaf 缓存:KV 按 block 零拷贝共享,LINEAR 按 checkpoint 拷贝恢复。</span>
+            </div>
+            <div class="metric">
+              <strong>1</strong>
+              <span>recurrent state 累积压缩,一次只挂载最深的单个 checkpoint。</span>
+            </div>
+            <div class="metric">
+              <strong>∅</strong>
+              <span>独立 hash 域:linear 用 chunk-strided 自有 hash,不复用 KV by-block 链。</span>
+            </div>
+            <div class="metric">
+              <strong>−1</strong>
+              <span>match 保留最后一个 token(probe 上限 size−1),forward 至少算一个新 token。</span>
+            </div>
+          </div>
+
+          <div class="callout">
+            <strong>核心设计:</strong>
+            linear checkpoint 复用 <code>PrefixCache</code> 的 LRU / eviction / insert 全套机制(仅换 hash 步长与 admission 语义),复用 <code>BlockManagerImpl</code> 的 slot id 池。它不发明新的缓存数据结构,而是把"我最远能恢复到哪"这个问题<em>组合</em>进既有前缀缓存框架。
+          </div>
+        </section>
+
+        <section id="problem">
+          <h2>2. 问题与约束</h2>
+
+          <h3>2.1 为什么不能照搬 KV 引用计数</h3>
+          <p>
+            KV 前缀缓存能零拷贝共享,前提是 KV block 一旦写入就<strong>不可变</strong>:序列 A 和序列 B 共享同一段前缀 block,谁都不会改写它。而 GDN 的 recurrent state 相反——kernel 每一步都 <code>index_put_</code> 原地覆盖 slot 内容。若两个序列共享同一 slot,后写者会污染先写者。因此 linear-state 的复用只能是<strong>拷贝语义</strong>:命中时把 checkpoint 的内容拷贝进请求私有的 live slot,而非共享指针。
+          </p>
+
+          <h3>2.2 累积压缩带来的"单点恢复"</h3>
+          <p>
+            KV attention 逐 token 独立,可以在任意 block 边界冷启动——前面复用的 block 是精确值。但 recurrent state 是<strong>把历史累积压缩</strong>进固定大小的 state;它只在被显式 checkpoint 的那些边界上是"精确快照"。因此:
+          </p>
+          <ul>
+            <li>复用只能落在 checkpoint 存在的<strong>稀疏 chunk 边界</strong>上,不能落在任意 KV block 边界。</li>
+            <li>命中多个 checkpoint 时,只挂载<strong>最深的一个</strong>——它的 state 已包含之前所有 checkpoint 的信息。</li>
+            <li>若强行按 KV 匹配长度冷启动到一个没有 checkpoint 的边界,recurrent state 会损坏(KV 前缀是对的,但 state 是错的),输出语义漂移。</li>
+          </ul>
+
+          <div class="callout warning">
+            <strong>size−1 边界规则:</strong>
+            match 的 probe 上限是 <code>size − 1</code>,保留最后一个 token 给 forward。这个 size−1 与 KV 自己的 last-block pop <em>不冗余</em>:KV 的 pop 落在任意 block 边界,而 linear checkpoint 只存在于稀疏 chunk 边界。只有 checkpoint 索引自己知道快照在哪,所以"snap 到 final 之下最深的 checkpoint"必须在这一层完成。
+          </div>
+
+          <h3>2.3 slot id 空间约束</h3>
+          <p>
+            id 池是<strong>统一</strong>的:slot id <code>[1, num_slots)</code> 既服务 LIVE slot(被某序列持有、正在原地更新),也服务已提交的 CHECKPOINT slot(被 <code>prefix_cache_</code> 拥有),两者在引用计数下可互换。slot 0 是继承来的 padding block。GDN live slot id 是通用的、且被 embedding_cache 共享,所以重构 linear cache 不能把 checkpoint id 扩进这个受限空间之外。
+          </p>
+        </section>
+
+        <section id="architecture">
+          <h2>3. 系统架构</h2>
+
+          <h3>3.1 核心组件</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>组件</th><th>路径</th><th>职责</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>LinearStatePrefixCache</code></td>
+                  <td><code>framework/prefix_cache/linear_state_prefix_cache.h</code></td>
+                  <td><code>PrefixCache</code> 子类。checkpoint 索引,复用基类 LRU/eviction/insert,仅覆写 <code>match()</code>:按 chunk 链式 hash 探测最远可恢复前缀。</td>
+                </tr>
+                <tr>
+                  <td><code>LinearStateBlockManager</code></td>
+                  <td><code>framework/block/linear_state_block_manager.h</code></td>
+                  <td>CompositeBlockManager 的 LINEAR leaf。继承 <code>BlockManagerImpl</code> 的 slot 池;负责每步 slot 生命周期(save→rotate→acquire)与 checkpoint 提交。</td>
+                </tr>
+                <tr>
+                  <td><code>restore_linear_state_slots</code></td>
+                  <td><code>framework/kv_cache/linear_state_restore.{h,cpp}</code></td>
+                  <td>worker 侧 restore:按每个 op 把 <code>restore_src_slot_id</code> 跨所有 linear 层拷进 <code>linear_state_id</code>,并回写 <code>has_initial_state</code>(warm/cold)。</td>
+                </tr>
+                <tr>
+                  <td><code>LinearStateCacheOp</code></td>
+                  <td><code>framework/model/model_input_params.h</code></td>
+                  <td>调度器→worker 的 IPC 描述符:live slot id、restore 请求位、已解析的 checkpoint 源 slot id。类比 KV 只传 block-swap 描述符。</td>
+                </tr>
+                <tr>
+                  <td><code>Sequence</code> linear hashes</td>
+                  <td><code>framework/request/sequence.{h,cpp}</code></td>
+                  <td><code>linear_state_hashes_</code> 单源缓存 + <code>update_linear_state_hashes(chunk_stride)</code>,随 prefill 推进增量补齐,供 match 直接消费。</td>
+                </tr>
+                <tr>
+                  <td>Composite / Scheduler</td>
+                  <td><code>framework/block/composite_block_manager.cpp</code>、<code>scheduler/chunked_prefill_scheduler.cpp</code></td>
+                  <td>跨 leaf 编排:对 KV 与 LINEAR 各自匹配长度取 min、做 chunk 对齐与 KV-block clamp;prefill 分配走 linear gate。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>3.2 架构图</h3>
+          <pre class="mermaid architecture-diagram">flowchart TB
+  subgraph sched["调度层 (Scheduler / Composite)"]
+    seq["Sequence&lt;br/&gt;linear_state_hashes_"]
+    composite["CompositeBlockManager&lt;br/&gt;跨 leaf min + chunk 对齐 + KV clamp"]
+  end
+
+  subgraph leaves["Block Manager Leaves"]
+    kv["KV leaf&lt;br/&gt;BlockManagerImpl&lt;br/&gt;零拷贝共享"]
+    linear["LINEAR leaf&lt;br/&gt;LinearStateBlockManager&lt;br/&gt;checkpoint 拷贝"]
+    lidx{"LinearStatePrefixCache&lt;br/&gt;checkpoint 索引 (LRU)"}
+  end
+
+  subgraph worker["Worker 执行层"]
+    op["LinearStateCacheOp&lt;br/&gt;live id / restore / src id"]
+    restore["restore_linear_state_slots&lt;br/&gt;src -&gt; live 逐层拷贝"]
+    forward["Model Forward&lt;br/&gt;has_initial_state = warm/cold"]
+  end
+
+  seq --&gt; composite
+  composite -- allocate_shared --&gt; kv
+  composite -- "allocate_shared token/hash" --&gt; linear
+  linear --&gt; lidx
+  lidx -- "最深 checkpoint" --&gt; linear
+  composite -- "min(kv_len, linear_len)" --&gt; op
+  op --&gt; restore --&gt; forward
+
+  classDef schedNode fill:#eef0fd,stroke:#3b4bd8,color:#1b2130;
+  classDef kvNode fill:#e7ecff,stroke:#232a52,color:#1b2130;
+  classDef linNode fill:#f6e5df,stroke:#c1583b,color:#1b2130;
+  classDef wkNode fill:#f3f5f9,stroke:#5a6478,color:#1b2130;
+  classDef idxNode fill:#fbe9e7,stroke:#b3261e,color:#1b2130;
+
+  class seq,composite schedNode;
+  class kv kvNode;
+  class linear,restore linNode;
+  class lidx idxNode;
+  class op,forward wkNode;</pre>
+
+          <h3>3.3 设计原则</h3>
+          <div class="two-col">
+            <div class="panel">
+              <h3>组合而非另起炉灶</h3>
+              <p>linear checkpoint 复用同一套 <code>PrefixCache</code> 与 <code>BlockManagerImpl</code> 机制,只换 hash 步长与 admission 语义。同 hash 函数、差步长,组合持有而非平行实现。</p>
+            </div>
+            <div class="panel">
+              <h3>Leaf 保持 KV-blind</h3>
+              <p>LINEAR leaf 只在自己的 token/chunk 域计数,从不看 KV 匹配长度。跨 leaf 取 min、chunk 对齐、KV-block clamp 都是 composite 的职责。</p>
+            </div>
+            <div class="panel">
+              <h3>拷贝语义,单点挂载</h3>
+              <p>命中不共享指针而是拷贝进私有 live slot;因累积压缩,只挂载最深的单个 checkpoint,其 state 已包含之前所有边界。</p>
+            </div>
+            <div class="panel">
+              <h3>IPC 只传已解析描述符</h3>
+              <p><code>LinearStateCacheOp</code> 只带 live id / restore 位 / src id,不传 prefix hash——与 KV 只传 block-swap 描述符对称。restore 请求位独立于 <code>src_id&gt;=0</code>,让"请求了但没解析到源→强制冷启动"能跨 IPC 存活。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="hash">
+          <h2>4. 独立 Hash 域</h2>
+          <p>
+            这是本 PR 最关键、也最早踩坑的设计点。早期实现让 linear checkpoint <strong>复用 KV 的 by-block hash</strong>,结果是"存了却查不到":checkpoint 按 KV block 边界的 hash 存入,但 linear 的复用探测发生在 chunk 边界,两套边界不重合,匹配恒失败。
+          </p>
+          <p>
+            正确方向是让 linear 拥有<strong>自己的 hash domain</strong>:
+          </p>
+          <ul>
+            <li><strong>步长不同:</strong>KV 按 KV block(每 <code>block_size</code> 个 token)链式 hash;linear 按 <strong>prefill chunk</strong>(<code>chunk_stride</code> 个 token)链式 hash。</li>
+            <li><strong>单源缓存:</strong>链式 hash 在 <code>Sequence::linear_state_hashes_</code> 上预计算一次,随 prefill 推进由 <code>update_linear_state_hashes(chunk_stride)</code> 增量补齐,match 时经 <code>block_hashes</code> 参数直接传入,不重算——与 KV 传 <code>seq-&gt;block_hashes()</code> 对称。</li>
+            <li><strong>提交用记录 hash:</strong>checkpoint 插入索引时用<strong>当时边界的 recorded hash</strong>(<code>insert_with_recorded_hash</code>),而非用序列当前 token 重算——否则会 key 到更深的当前边界,checkpoint 永远匹配不上。</li>
+            <li><strong>KV 复用取 min:</strong>最终复用长度是 <code>min(kv_match, linear_reach)</code>,由 composite 完成。linear 只回答"我最远能恢复到哪(L)",KV 复用被 clamp 到 L。</li>
+          </ul>
+          <div class="callout">
+            <strong>为什么是 min:</strong>KV 能匹配到任意 block 边界,linear 只能恢复到 checkpoint 边界。两者取交集才安全——复用长度既要 KV 有精确 block,也要 linear 有精确 checkpoint。
+          </div>
+        </section>
+
+        <section id="workflow">
+          <h2>5. 核心工作流</h2>
+
+          <h3>5.1 命中与恢复(restore)</h3>
+          <ol>
+            <li>调度器为新请求准备 token span,<code>update_linear_state_hashes(chunk_stride)</code> 补齐链式 hash。</li>
+            <li>composite 对每个 leaf 调 <code>allocate_shared</code>:KV leaf 返回可共享 block 并计入序列;LINEAR leaf 走 <code>match()</code> 只<strong>探测</strong>最深 checkpoint,不计入 admission。</li>
+            <li>LINEAR 的 match 用 <code>contains()</code> 探测(不动 LRU),命中后用 <code>find()</code> 取回最深 checkpoint block(refcount+1、LRU 提升),作为 restore 源暂存,<strong>不进</strong>序列的 LINEAR block 向量。</li>
+            <li>composite 取 <code>min(kv_len, linear_reach)</code>,做 chunk 对齐与 KV-block clamp,生成每个序列的 <code>LinearStateCacheOp</code>(live id、restore_requested、restore_src_slot_id)。</li>
+            <li>worker 侧在 forward 前调 <code>restore_linear_state_slots</code>:按 op 把 <code>restore_src_slot_id</code> 跨所有 linear 层拷进 <code>linear_state_id</code>,并回写 <code>has_initial_state</code>(RESTORED→warm=1,COLD_START→cold=0)。</li>
+            <li>forward 消费 warm state 从 checkpoint 边界继续,跳过已恢复前缀的 prefill。</li>
+          </ol>
+
+          <h3>5.2 保存(save / checkpoint 提交)</h3>
+          <p>
+            LINEAR leaf 的每步入口 <code>allocate_for_sequence</code> 拥有完整 slot 生命周期,save 与 KV 只 append 不同,是 <strong>replace-vs-append</strong> 的非对称:
+          </p>
+          <ol>
+            <li>先执行上一步延迟的 save:序列的 live slot 此刻正好持有刚算完的边界 state,把它<strong>提升</strong>进 checkpoint 索引(<code>insert_with_recorded_hash</code>),并把序列<strong>原地轮转</strong>到一个新的 live slot(<code>replace_block</code>)。</li>
+            <li>若序列此刻还缺 live slot,再 acquire 一个。</li>
+          </ol>
+          <p>save 通过 <code>replace_block</code> 原地轮转、不返回新 block;composite 只 append step 2 新 acquire 的。save 是纯 host 侧簿记,不需要 worker 拷贝。</p>
+
+          <h3>5.3 时序图</h3>
+          <pre class="mermaid sequence-diagram">sequenceDiagram
+  participant Sched as Scheduler / Composite
+  participant KV as KV leaf
+  participant LIN as LINEAR leaf
+  participant IDX as Checkpoint Index
+  participant WK as Worker (restore + forward)
+
+  Sched-&gt;&gt;Sched: update_linear_state_hashes(chunk_stride)
+  Sched-&gt;&gt;KV: allocate_shared(token_ids, block_hashes)
+  KV--&gt;&gt;Sched: shared blocks, kv_len
+  Sched-&gt;&gt;LIN: allocate_shared(token_ids, linear_hashes)
+  activate LIN
+  LIN-&gt;&gt;IDX: match() probe (contains, no LRU)
+  IDX--&gt;&gt;LIN: 最深 checkpoint hit / miss
+  LIN-&gt;&gt;IDX: find() 取回 (refcount+1)
+  LIN--&gt;&gt;Sched: restore src (不入序列), linear_reach
+  deactivate LIN
+  Sched-&gt;&gt;Sched: min(kv_len, linear_reach) + chunk 对齐 + clamp
+  Sched-&gt;&gt;WK: LinearStateCacheOp[]  (live / restore / src)
+  activate WK
+  WK-&gt;&gt;WK: restore_linear_state_slots: src -&gt; live 逐层拷贝
+  WK-&gt;&gt;WK: has_initial_state = warm / cold
+  WK-&gt;&gt;WK: model forward 从 checkpoint 继续
+  WK--&gt;&gt;Sched: step 完成
+  deactivate WK</pre>
+
+          <h3>5.4 prefill 分配的 gate</h3>
+          <p>
+            <code>get_prefill_allocate_tokens</code> 里改用 <code>num_tokens()</code> 的分支<strong>只在</strong> <code>has_linear_attention_layers_ &amp;&amp; enable_prefix_cache_</code> 时走;纯 KV 路径逐字节回退到主分支的 <code>kv + step</code> 逻辑,避免对非 linear 模型产生行为漂移。
+          </p>
+        </section>
+
+        <section id="apis">
+          <h2>6. 关键数据结构与接口</h2>
+
+          <h3>6.1 LinearStateCacheOp(调度器 → worker)</h3>
+          <pre><code class="language-cpp">struct LinearStateCacheOp {
+  // 序列推进 recurrent state 的 live slot。
+  int32_t linear_state_id = -1;
+
+  // restore 请求位 + 调度器解析出的 checkpoint 源 slot。
+  // worker 把 restore_src_slot_id 拷进 linear_state_id。
+  // 保留为独立 bool(不从 src_id>=0 推导),让
+  // "请求了 restore 但没解析到源 -> 强制冷启动" 能跨 IPC 存活。
+  bool    restore_requested = false;
+  int32_t restore_src_slot_id = -1;
+};</code></pre>
+
+          <h3>6.2 LinearStatePrefixCache::match</h3>
+          <pre><code class="language-cpp">// 把 token_ids 按 chunk_stride 切成链式 per-chunk key,
+// 对 STRICTLY BELOW final token 的每个整 chunk 探测索引,
+// 找最远可恢复前缀。每个命中把 reach 扩到
+// (chunk_index + 1) * chunk_stride。允许 gap:后面的命中可
+// 越过中间的 miss。matched_tokens 写回该 reach(chunk_stride 的整数倍;
+// 全 miss 时为 0)。因累积压缩,只挂载最深的单个命中。
+std::vector&lt;Block&gt; match(
+    const Slice&lt;int32_t&gt;&amp; token_ids,
+    const Slice&lt;Block&gt;&amp;   existed_shared_blocks = {},
+    const MMData&amp;          mm_data = MMData(),
+    const Slice&lt;XXH3Key&gt;&amp;  block_hashes = {},   // 序列预算的 linear 链式 hash
+    size_t*                matched_tokens = nullptr) override;</code></pre>
+          <ul>
+            <li>probe 用 <code>contains()</code>,<strong>不动</strong> LRU 时序。</li>
+            <li>命中后用 <code>find()</code> 取回最深 checkpoint(refcount+1、LRU 提升),pin 住直到 restore。</li>
+            <li>leaf 保持 KV-blind:只在自己 token/chunk 域计数,不看 KV 匹配长度。</li>
+          </ul>
+
+          <h3>6.3 LinearStateBlockManager</h3>
+          <pre><code class="language-cpp">class LinearStateBlockManager final : public BlockManagerImpl {
+ public:
+  // chunk_stride: checkpoint 步长(一个 prefill chunk 的 token 数),
+  // 转发给索引作为 hash 域步长。默认 -1(禁用探测),
+  // 供只驱动 slot 池、不走 token match 的 block 级单测。
+  LinearStateBlockManager(uint32_t num_slots,
+                          int32_t  kv_block_size,
+                          int32_t  chunk_stride = -1);
+
+  // 每步入口:先执行上一步延迟的 save(提升 + 原地轮转),
+  // 再按需 acquire live slot。replace-vs-append 非对称。
+  std::optional&lt;std::vector&lt;Block&gt;&gt; allocate_for_sequence(
+      Sequence* seq, size_t num_tokens) override;
+
+  // 探测(不 admit)checkpoint 索引取最远前缀。
+  // 与 KV 走同一 virtual,但返回的是 restore SOURCE,
+  // 不入序列 block 向量、不计入 admission。
+  std::vector&lt;Block&gt; allocate_shared(
+      const Slice&lt;int32_t&gt;&amp; token_ids,
+      const Slice&lt;Block&gt;&amp;   existed_shared_blocks = {},
+      const MMData&amp;          mm_data = MMData(),
+      const Slice&lt;XXH3Key&gt;&amp;  block_hashes = {},
+      size_t*                matched_tokens = nullptr) override;
+};</code></pre>
+
+          <h3>6.4 restore(worker 侧)</h3>
+          <pre><code class="language-cpp">// 逐 op in-place:把 restore_src_slot_id 跨所有 linear 层拷进
+// linear_state_id,并回写 has_initial_state:
+//   RESTORED   -> 1 (warm)
+//   COLD_START -> 0 (miss / 越界 / 拷贝失败)
+//   无 restore 请求 -> 不动(continued request 保持 kv-cache 默认)
+void restore_linear_state_slots(
+    std::vector&lt;KVCache&gt;&amp;                     kv_caches,
+    const std::vector&lt;LinearStateCacheOp&gt;&amp;    cache_ops,
+    std::vector&lt;int64_t&gt;&amp;                     has_initial_state);</code></pre>
+          <p>slot 归属与 LRU 驱逐在调度器侧的 <code>LinearStateBlockManager</code>;此 helper 纯粹是 cache 指示的 worker 侧 restore 拷贝。save 不需要 worker 拷贝(由调度器侧提升完成),故此 API 只覆盖 restore。</p>
+        </section>
+
+        <section id="concurrency">
+          <h2>7. 并发与正确性</h2>
+
+          <h3>7.1 restore 的 stream 归属</h3>
+          <p>
+            restore 拷贝入队在调用点的当前 stream。修复后的落地方案:restore 移到 <strong>worker 线程</strong> <code>step_for_schedule_overlap</code> 入口,走 <strong>compute_stream</strong>;单线程 ThreadPool + 同一 stream-ordered 语义即自动排序——同 stream 上的 <code>copy_</code> 与 forward 依赖天然有序,不需要 <code>synchronize_default_stream</code> 这种 stop-the-world。
+          </p>
+          <div class="callout warning">
+            <strong>并发正确性的关键点(易误判):</strong>
+            并发场景下的输出问题<strong>不是</strong> linear cache 竞态,也不是 GDN chunk kernel 的 batch 数学问题——kernel 本身在单元测试中相对误差极小、数值正确。真因在 caller 侧的 prefill 分块路径:分块与恢复边界未对齐时,recurrent state 从错误的 checkpoint 继续。修复点在分块与 checkpoint 对齐,而非 kernel。
+          </div>
+
+          <h3>7.2 save barrier 可删</h3>
+          <p>
+            <code>worker_service.cpp</code> 里的 <code>wait_for_linear_state_save</code> 等的是 <code>NO_SYNC</code> future、不等 device,而 save 本身是纯 host 簿记,因此该 barrier 可直接删。在 overlap + graph 组合下实测验证通过。
+          </p>
+
+          <h3>7.3 MTP / graph 兼容性</h3>
+          <ul>
+            <li><strong>MTP + graph 已知不兼容:</strong>测 MTP 必须关 graph。回归时把「无 MTP + graph」与「MTP + 无 graph」两种组合分开跑。</li>
+            <li><strong>MTP model path:</strong>主模型与 draft 必须同规格(混用不同尺寸会因 rms_norm shape 不匹配而 crash)。</li>
+            <li><strong>overlap restore 的 override 保留:</strong>MTP 内层 worker 关 overlap 走 prepare restore、外层无 <code>kv_caches_</code>,若强行搬到基类既无效又会破坏 LLM 的 <code>NO_SYNC</code> 语义——保留该 override。</li>
+          </ul>
+
+          <h3>7.4 admission flag</h3>
+          <p>
+            per-sequence 的 LINEAR leaf 一律 <code>participates_in_admission=false</code>(判据是语义而非 block_size 数值)。checkpoint 是 restore 源,不占 admission 预算。此外 LINEAR leaf 的 <code>block_size</code> 是真实 KV 值,不再压成魔法值 1。
+          </p>
+        </section>
+
+        <section id="testing">
+          <h2>8. 测试与验证</h2>
+
+          <h3>8.1 单元测试</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>测试目标</th><th>覆盖点</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>linear_state_prefix_cache_test</code></td>
+                  <td>checkpoint 索引 match:链式 hash 探测、size−1 边界、gap 越过 miss、最深单点挂载、全 miss 返回 0。</td>
+                </tr>
+                <tr>
+                  <td><code>block_manager_test</code>(+828/−68)</td>
+                  <td>LinearStateBlockManager slot 生命周期:save 提升 + 原地轮转、acquire、统一 id 池引用计数。</td>
+                </tr>
+                <tr>
+                  <td><code>chunked_prefill_scheduler_test</code></td>
+                  <td>跨 leaf min、chunk 对齐、KV-block clamp、prefill 分配 gate。</td>
+                </tr>
+                <tr>
+                  <td><code>batch_test</code> / <code>batch_packed_input_test</code></td>
+                  <td>LinearStateCacheOp 打包、has_initial_state 回写。</td>
+                </tr>
+                <tr>
+                  <td><code>kv_cache_estimation_test</code></td>
+                  <td>含 linear 层时的 cache 容量估算。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>8.2 端到端回归</h3>
+          <ul>
+            <li>回归覆盖串行 + 并发两种 workload,避免只验串行而漏过并发下的语义漂移。</li>
+            <li>性能结论以预热后的<strong>客户端侧 TTFT</strong> 为准,服务端 request 日志仅作辅助排查。</li>
+            <li>验证用 Qwen3.5-9B 即可(24 linear + 8 full),不必跑更大规格。</li>
+            <li>全量单元测试通过。</li>
+          </ul>
+
+          <div class="callout">
+            <strong>验收标准:</strong>
+            冷启动命中后第二次同前缀请求 TTFT 显著下降;串行与并发两种 workload 输出无语义漂移;warm/cold 回写与 forward 一致;continued request 保持 kv-cache 默认不被误改。
+          </div>
+        </section>
+
+        <section id="risks">
+          <h2>9. 风险与未决问题</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>风险</th><th>影响</th><th>缓解措施</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>hash 域步长错配</td>
+                  <td>checkpoint 存了却查不到(早期实现复用 KV by-block hash 的坑)。</td>
+                  <td>linear 用独立 chunk-strided hash;提交用 recorded hash;单测覆盖 match 边界。</td>
+                </tr>
+                <tr>
+                  <td>recurrent state 冷启动损坏</td>
+                  <td>复用落在无 checkpoint 边界 → 语义漂移。</td>
+                  <td>size−1 保留 + snap 到最深 checkpoint;COLD_START 显式回写 has_initial_state=0。</td>
+                </tr>
+                <tr>
+                  <td>prefill 分块与 checkpoint 未对齐</td>
+                  <td>并发下 recurrent state 从错误边界继续,输出漂移。</td>
+                  <td>已定位为真因;回归串行 + 并发同跑,分「无 MTP」「MTP」两组。</td>
+                </tr>
+                <tr>
+                  <td>MTP + graph 不兼容</td>
+                  <td>capture 失败或异常。</td>
+                  <td>测 MTP 关 graph;主模型与 draft 同规格。</td>
+                </tr>
+                <tr>
+                  <td>VLM linear-prefix 关闭陷阱</td>
+                  <td>若直接把开关穿进 <code>enable_linear_state</code>,会断掉 VLM 的 GDN forward。</td>
+                  <td>正确修法是新增独立 flag + 动态共享 builder(本轮暂缓,已记录)。</td>
+                </tr>
+                <tr>
+                  <td>WIP 状态</td>
+                  <td>PR 仍标 [WIP],尚未合入 main。</td>
+                  <td>合入前完成串并发回归 + 客户端 TTFT 采集 + 代码自审。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+  </div>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      securityLevel: "loose",
+      themeVariables: {
+        primaryColor: "#eef0fd",
+        primaryBorderColor: "#3b4bd8",
+        primaryTextColor: "#1b2130",
+        lineColor: "#c1583b",
+        fontFamily: "Georgia, serif"
+      },
+      flowchart: { htmlLabels: true, curve: "linear" },
+      sequence: { mirrorActors: false }
+    });
+  </script>
+</body>
+</html>

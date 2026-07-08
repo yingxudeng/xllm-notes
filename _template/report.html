@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- TODO: 改标题 -->
+  <title>标题 · PR #____</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+      --terra-soft: #f6e5df;
+      --code-bg: #f5f6f8;
+      --code-ink: #24304a;
+      --code-line: #dde2ec;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1, h2, h3, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--indigo-deep); border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+    .brand a { color: #fff; }
+    .topbar .crumb { color: #aeb6d4; font-size: 13px; }
+    .topbar .crumb a { color: #aeb6d4; }
+
+    .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header { padding: 44px 0 30px; border-bottom: 2px solid var(--indigo-deep); }
+    .eyebrow {
+      display: inline-block; color: var(--terra); font-size: 12px;
+      font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+    .subtitle { max-width: 900px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      display: inline-flex; align-items: center; min-height: 28px;
+      padding: 3px 11px; border: 1px solid var(--line); border-radius: 2px;
+      background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 600;
+    }
+    .tag.link { color: var(--indigo); border-color: #c2c8f0; background: #eef0fd; }
+
+    nav.toc {
+      position: sticky; top: 55px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 22px 0 30px; padding: 12px 14px;
+      background: rgba(236, 239, 244, 0.92); backdrop-filter: blur(6px);
+      border: 1px solid var(--line); border-radius: 3px;
+    }
+    nav.toc a {
+      padding: 4px 11px; border-radius: 2px; color: var(--muted);
+      font-size: 13.5px; font-weight: 600;
+    }
+    nav.toc a:hover { background: var(--indigo); color: #fff; text-decoration: none; }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative; margin-bottom: 22px; padding: 30px 30px 30px 34px;
+      border: 1px solid var(--line); border-left: 4px solid var(--indigo);
+      border-radius: 3px; background: var(--surface);
+    }
+
+    h2 { margin: 0 0 16px; font-size: 25px; line-height: 1.28; color: var(--indigo-deep); }
+    h3 { margin: 24px 0 10px; font-size: 18px; line-height: 1.35; color: var(--terra); }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+    .metric {
+      min-height: 116px; padding: 16px; border: 1px solid var(--line);
+      border-top: 3px solid var(--terra); border-radius: 2px; background: var(--surface-alt);
+    }
+    .metric strong {
+      display: block; margin-bottom: 6px; color: var(--indigo);
+      font-size: 26px; font-family: Georgia, serif; line-height: 1.1;
+    }
+    .metric span { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+    .callout {
+      margin: 18px 0; padding: 15px 18px; border: 1px solid #c2c8f0;
+      border-left: 4px solid var(--indigo); border-radius: 2px; background: #eef0fd;
+    }
+    .warning { border-color: #e6c9a8; border-left-color: var(--terra); background: var(--terra-soft); }
+    .danger { border-color: #e6b3b3; border-left-color: #b3261e; background: #fbe9e7; }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 3px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; background: var(--surface); }
+    th, td {
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      vertical-align: top; text-align: left; font-size: 14px;
+    }
+    th { background: var(--indigo-deep); color: #fff; font-weight: 700; border-bottom: none; }
+    tbody tr:nth-child(even) { background: var(--surface-alt); }
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px; border-radius: 2px; background: #e8ebf3; color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto; margin: 16px 0; padding: 18px;
+      border: 1px solid var(--code-line); border-left: 3px solid var(--terra);
+      border-radius: 3px; background: var(--code-bg); color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px; line-height: 1.6;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+
+    .mermaid { border: 1px solid var(--line); border-radius: 3px; background: #fbfcfe; color: var(--ink); }
+    .architecture-diagram { min-height: 480px; padding: 16px; }
+    .architecture-diagram svg {
+      display: block; width: min(100%, 1000px) !important;
+      max-width: none !important; height: auto !important; margin: 0 auto;
+    }
+    .sequence-diagram { min-height: 480px; padding: 16px; }
+    .sequence-diagram svg {
+      display: block; width: max(100%, 900px) !important;
+      max-width: none !important; height: auto !important; margin: 0 auto;
+    }
+
+    .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .panel {
+      padding: 16px; border: 1px solid var(--line); border-top: 3px solid var(--indigo);
+      border-radius: 2px; background: var(--surface-alt);
+    }
+    .panel h3 { margin-top: 0; color: var(--indigo-deep); }
+
+    @media (max-width: 920px) {
+      nav.toc { position: static; }
+      .summary-grid, .two-col { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar, nav.toc { display: none; }
+      .page { max-width: none; padding: 0; }
+      section { break-inside: avoid; border-left-width: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><a href="../../">xLLM Notes</a></span>
+      <!-- 面包屑:report 在 reports/<slug>/ 下,回站点首页是 ../../ -->
+      <span class="crumb">/ reports / &lt;slug&gt;</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Feature Design Report</div>
+      <h1>标题</h1>
+      <p class="subtitle">一到两句话说清这篇讲什么、面向谁。</p>
+      <div class="meta">
+        <span class="tag link"><a href="https://github.com/xLLM-AI/xllm/pull/____">PR #____</a></span>
+        <span class="tag">分支：____</span>
+        <span class="tag">改动：+___ / −___，__ files</span>
+        <span class="tag">状态：WIP / Merged</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#summary">执行摘要</a>
+      <a href="#architecture">系统架构</a>
+      <a href="#workflow">核心工作流</a>
+      <a href="#apis">关键接口</a>
+      <a href="#testing">测试与验证</a>
+      <a href="#risks">风险</a>
+    </nav>
+
+    <main>
+      <section id="summary">
+        <h2>1. 执行摘要</h2>
+        <p>正文……</p>
+        <div class="summary-grid">
+          <div class="metric"><strong>值</strong><span>说明</span></div>
+          <div class="metric"><strong>值</strong><span>说明</span></div>
+          <div class="metric"><strong>值</strong><span>说明</span></div>
+          <div class="metric"><strong>值</strong><span>说明</span></div>
+        </div>
+        <div class="callout"><strong>核心结论：</strong>一句话。</div>
+      </section>
+
+      <section id="architecture">
+        <h2>2. 系统架构</h2>
+        <p>正文……</p>
+        <!-- Mermaid 提示:节点/边的 label 若含 () / 空格 等,用双引号包起来,如 node["文本 (备注)"] -->
+        <pre class="mermaid architecture-diagram">flowchart TB
+  A["调用方"] --&gt; B["核心组件"]
+  B --&gt; C["后端 / 执行"]</pre>
+      </section>
+
+      <section id="workflow">
+        <h2>3. 核心工作流</h2>
+        <ol><li>步骤一</li><li>步骤二</li></ol>
+        <pre class="mermaid sequence-diagram">sequenceDiagram
+  participant A as 调用方
+  participant B as 组件
+  A-&gt;&gt;B: 请求
+  B--&gt;&gt;A: 响应</pre>
+      </section>
+
+      <section id="apis">
+        <h2>4. 关键接口</h2>
+        <pre><code class="language-cpp">// 贴关键结构 / 签名</code></pre>
+      </section>
+
+      <section id="testing">
+        <h2>5. 测试与验证</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>测试目标</th><th>覆盖点</th></tr></thead>
+            <tbody>
+              <tr><td><code>xxx_test</code></td><td>……</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="risks">
+        <h2>6. 风险与未决问题</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>风险</th><th>影响</th><th>缓解措施</th></tr></thead>
+            <tbody>
+              <tr><td>……</td><td>……</td><td>……</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      securityLevel: "loose",
+      themeVariables: {
+        primaryColor: "#eef0fd",
+        primaryBorderColor: "#3b4bd8",
+        primaryTextColor: "#1b2130",
+        lineColor: "#c1583b",
+        fontFamily: "Georgia, serif"
+      },
+      flowchart: { htmlLabels: true, curve: "linear" },
+      sequence: { mirrorActors: false }
+    });
+  </script>
+</body>
+</html>

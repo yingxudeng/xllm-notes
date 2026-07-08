@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xLLM Notes · 工程知识库</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1, h2, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--indigo-deep);
+      border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 14px 24px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+
+    .page { max-width: 1040px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header {
+      padding: 52px 0 34px;
+      border-bottom: 2px solid var(--indigo-deep);
+    }
+    .eyebrow {
+      display: inline-block;
+      color: var(--terra);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(32px, 4.4vw, 50px); line-height: 1.1; }
+    .subtitle { max-width: 720px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    h2 {
+      margin: 44px 0 4px;
+      font-size: 23px;
+      color: var(--indigo-deep);
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    h2 .count {
+      font-size: 13px;
+      font-weight: 600;
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      color: var(--terra);
+    }
+    .section-note { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      display: block;
+      padding: 20px 22px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--indigo);
+      border-radius: 3px;
+      background: var(--surface);
+      transition: border-left-color 0.15s ease, transform 0.15s ease;
+    }
+    .card:hover {
+      transform: translateX(2px);
+      border-left-color: var(--terra);
+      text-decoration: none;
+    }
+    .card .card-title {
+      margin: 0 0 8px;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--indigo-deep);
+      line-height: 1.4;
+    }
+    .card .card-desc { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+    .card .card-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      background: var(--surface-alt);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge.pr { color: var(--indigo); border-color: #c2c8f0; background: #eef0fd; }
+    .badge.date { color: var(--terra); border-color: #e6c9a8; background: #f6e5df; }
+
+    footer {
+      margin-top: 60px;
+      padding-top: 22px;
+      border-top: 2px solid var(--indigo-deep);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    footer code {
+      padding: 2px 6px;
+      border-radius: 2px;
+      background: #e8ebf3;
+      color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand">xLLM Notes</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Engineering Knowledge Base</div>
+      <h1>xLLM Notes</h1>
+      <p class="subtitle">
+        围绕 xLLM 推理框架的特性设计报告、PR 评审与知识沉淀。每篇为自包含 HTML,支持离线打开与打印导出。
+      </p>
+    </header>
+
+    <!-- ============ 设计报告 / PR 评审 ============ -->
+    <h2>设计报告 &amp; PR 评审 <span class="count">reports/</span></h2>
+    <p class="section-note">围绕某个特性或 PR 的一次性快照:架构、工作流、接口、验证与风险。</p>
+    <div class="cards">
+      <a class="card" href="reports/qwen35-linear-prefix-cache-pr1839/">
+        <div class="card-title">Qwen3.5 Linear-State Prefix Cache</div>
+        <p class="card-desc">
+          为 GDN linear-attention 模型引入 recurrent state 的前缀缓存:checkpoint 索引、chunk-strided 独立 hash 域、跨 leaf 复用与 worker 侧 restore。
+        </p>
+        <div class="card-meta">
+          <span class="badge pr">PR #1839</span>
+          <span class="badge date">2026-07-08</span>
+          <span class="badge">Feature Design</span>
+        </div>
+      </a>
+    </div>
+
+    <!-- ============ 知识沉淀 ============ -->
+    <h2>知识沉淀 <span class="count">notes/</span></h2>
+    <p class="section-note">跨 PR 的原理、踩坑与方法论,会随认识加深持续更新。</p>
+    <div class="cards">
+      <!-- 新增 note 时复制一张 card:
+      <a class="card" href="notes/<主题>/">
+        <div class="card-title">标题</div>
+        <p class="card-desc">一句话摘要。</p>
+        <div class="card-meta">
+          <span class="badge">Note</span>
+          <span class="badge date">YYYY-MM-DD</span>
+        </div>
+      </a>
+      -->
+    </div>
+
+    <footer>
+      新增条目:在 <code>reports/</code> 或 <code>notes/</code> 下建一个目录放 <code>index.html</code>(可复制 <code>_template/report.html</code>),再在本页对应分区补一张 card。详见 <code>README.md</code>。
+    </footer>
+  </div>
+</body>
+</html>
