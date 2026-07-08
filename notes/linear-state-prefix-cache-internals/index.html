@@ -212,21 +212,22 @@
         <h2>1. save / restore 闭环全景</h2>
         <pre class="ascii"><code>          LinearStatePrefixCache（scheduler 侧，每 dp_rank 一个）
           内部一个 SingleBlockManager 管全部物理 slot [0, num_slots)
-          free / live / checkpoint 三态共享同一 id 空间
-          ┌───────────────────────────────────────────────────────────┐
-                    ▲ allocate_live_slot            │ match(hash) 命中
-                    │ 分配空 slot 给运行序列          ▼ pin 住 checkpoint
-   ┌──────────┐ set │  ┌──────────┐   promotion    ┌──────────────┐
-   │ 序列 A    │◄────── │ live slot│───────────────►│ checkpoint   │
-   │ 运行中    │ 持有   │ 私有,     │  晋升（换手）    │ 公共,冻结,    │
-   └──────────┘        │ 原地覆写  │                │ LRU 可回收    │
-        │              └──────────┘                └──────────────┘
-        │ 第一次 forward 且复用块对齐前缀                    │
-        │ → restore: worker 把 checkpoint 拷进我的 live slot │
-        └───────────────────────────────────────────────────┘
+          ┌─────────────────────────────────────────────────────────┐
+          │      free / live / checkpoint 三态共享同一 id 空间          │
+          └─────────────────────────────────────────────────────────┘
+                    ▲ allocate_live_slot          │ match(hash) 命中
+                    │ 分配空 slot 给运行序列        ▼ pin 住 checkpoint
+   ┌──────────┐ set_slot ┌──────────┐  promotion  ┌──────────────┐
+   │ 序列 A    │◄─────────│ live slot │────────────►│ checkpoint   │
+   │ 运行中    │  持有     │ 私有,      │ 晋升（换手） │ 公共,冻结,     │
+   └──────────┘           │ 原地覆写   │             │ LRU 可回收     │
+        │                 └──────────┘             └──────────────┘
+        │ 第一次 forward 且复用块对齐前缀                     │
+        │ → restore: worker 把 checkpoint 拷进我的 live slot  │
+        └────────────────────────────────────────────────────┘
              restore 是真拷贝，因为 GDN state 不可共享</code></pre>
         <p>
-          左半是 save（scheduler 侧 promotion，零拷贝），右半是 restore（worker 侧跨层拷贝）。中间那个 <code>SingleBlockManager</code> 用同一片 id 空间管理三种状态的 slot，靠引用计数和所属容器区分。
+          图里 <strong>promotion</strong>（live slot ──► checkpoint 那条向右箭头）是 save，走 scheduler 侧零拷贝换手；<strong>restore</strong>（底部那条回到 live slot 的回环）走 worker 侧跨层拷贝。中间那个 <code>SingleBlockManager</code> 用同一片 id 空间管理三种状态的 slot，靠引用计数和所属容器区分。
         </p>
       </section>
 
