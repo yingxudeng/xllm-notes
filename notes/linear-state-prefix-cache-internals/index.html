@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Linear-State Prefix Cache 内部机制 · xLLM Notes</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+      --terra-soft: #f6e5df;
+      --code-bg: #f5f6f8;
+      --code-ink: #24304a;
+      --code-line: #dde2ec;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1, h2, h3, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--indigo-deep); border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+    .brand a { color: #fff; }
+    .topbar .crumb { color: #aeb6d4; font-size: 13px; }
+    .topbar .crumb a { color: #aeb6d4; }
+
+    .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header { padding: 44px 0 30px; border-bottom: 2px solid var(--indigo-deep); }
+    .eyebrow {
+      display: inline-block; color: var(--terra); font-size: 12px;
+      font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+    .subtitle { max-width: 900px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      display: inline-flex; align-items: center; min-height: 28px;
+      padding: 3px 11px; border: 1px solid var(--line); border-radius: 2px;
+      background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 600;
+    }
+    .tag.accent { color: var(--terra); border-color: #e6c9a8; background: var(--terra-soft); }
+
+    nav.toc {
+      position: sticky; top: 55px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 22px 0 30px; padding: 12px 14px;
+      background: rgba(236, 239, 244, 0.92); backdrop-filter: blur(6px);
+      border: 1px solid var(--line); border-radius: 3px;
+    }
+    nav.toc a {
+      padding: 4px 11px; border-radius: 2px; color: var(--muted);
+      font-size: 13.5px; font-weight: 600;
+    }
+    nav.toc a:hover { background: var(--indigo); color: #fff; text-decoration: none; }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative; margin-bottom: 22px; padding: 30px 30px 30px 34px;
+      border: 1px solid var(--line); border-left: 4px solid var(--indigo);
+      border-radius: 3px; background: var(--surface);
+    }
+
+    h2 { margin: 0 0 16px; font-size: 25px; line-height: 1.28; color: var(--indigo-deep); }
+    h3 { margin: 24px 0 10px; font-size: 18px; line-height: 1.35; color: var(--terra); }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    .callout {
+      margin: 18px 0; padding: 15px 18px; border: 1px solid #c2c8f0;
+      border-left: 4px solid var(--indigo); border-radius: 2px; background: #eef0fd;
+    }
+    .warning { border-color: #e6c9a8; border-left-color: var(--terra); background: var(--terra-soft); }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 3px; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; background: var(--surface); }
+    th, td {
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      vertical-align: top; text-align: left; font-size: 14px;
+    }
+    th { background: var(--indigo-deep); color: #fff; font-weight: 700; border-bottom: none; }
+    tbody tr:nth-child(even) { background: var(--surface-alt); }
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px; border-radius: 2px; background: #e8ebf3; color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto; margin: 16px 0; padding: 18px;
+      border: 1px solid var(--code-line); border-left: 3px solid var(--terra);
+      border-radius: 3px; background: var(--code-bg); color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12.5px; line-height: 1.55;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+    pre.ascii { line-height: 1.35; }
+
+    @media (max-width: 920px) {
+      nav.toc { position: static; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar, nav.toc { display: none; }
+      .page { max-width: none; padding: 0; }
+      section { break-inside: avoid; border-left-width: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><a href="../../">xLLM Notes</a></span>
+      <span class="crumb">/ notes / linear-state-prefix-cache-internals</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Knowledge · Linear-State Cache</div>
+      <h1>Linear-State Prefix Cache 内部机制</h1>
+      <p class="subtitle">
+        GDN 类线性注意力模型的 recurrent state 无法像 KV block 那样零拷贝共享。这篇讲 prefix cache 如何用「零拷贝换手（promotion）save + worker 侧拷贝 restore」这对不对称操作绕过限制，以及 scheduler↔worker 之间那个四字段契约结构体每个字段的必要性。
+      </p>
+      <div class="meta">
+        <span class="tag accent">Note</span>
+        <span class="tag">GDN / Linear Attention</span>
+        <span class="tag">Prefix Cache</span>
+        <span class="tag">Recurrent State</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#why">为什么特殊</a>
+      <a href="#overview">闭环全景</a>
+      <a href="#slots">两个 slot 概念</a>
+      <a href="#save">save · promotion</a>
+      <a href="#restore">restore · worker 拷贝</a>
+      <a href="#initialized">冷暖位</a>
+      <a href="#contract">四字段契约</a>
+      <a href="#pipeline">四阶段流水线</a>
+    </nav>
+
+    <main>
+      <section id="why">
+        <h2>0. 为什么 linear-state 不能照搬 KV prefix cache</h2>
+        <p>
+          KV prefix cache 之所以能省算力，是因为 KV block <strong>可以多 owner 共享</strong>：同一段前缀的 KV block 本就在显存里，缓存命中时只要把引用计数加一、指过去即可，<strong>零拷贝</strong>。
+        </p>
+        <p>
+          GDN（gated delta net）这类线性注意力层不同。它每一层维护一份 recurrent state（conv + ssm 两块张量），按 <em>slot</em> 存储，而且 kernel 每一步都会<strong>原地覆写</strong>这个 slot。这带来一个硬约束：
+        </p>
+        <div class="callout warning">
+          <strong>recurrent state 永不共享、单 owner。</strong>如果两个序列指向同一个 slot，其中一个 forward 一步就会把另一个的状态冲掉。所以 KV 那套「加个引用指过去」的零拷贝共享在这里根本走不通。
+        </div>
+        <p>于是 linear-state prefix cache 用了一对<strong>不对称</strong>的操作：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>KV prefix cache（熟悉的）</th><th>linear-state prefix cache（本文）</th></tr></thead>
+            <tbody>
+              <tr><td>存进 cache</td><td><code>insert()</code></td><td><strong>promotion</strong>（晋升 / 换手）</td></tr>
+              <tr><td>缓存对象</td><td>KV block，可多 owner 共享</td><td>recurrent state slot，永不共享、单 owner</td></tr>
+              <tr><td>存的方式</td><td>block 本就在，加 ref 指过去，<strong>零拷贝</strong></td><td>把序列当前 live slot 整个晋升为 checkpoint，序列换新空 slot，<strong>也零拷贝</strong></td></tr>
+              <tr><td>取出</td><td><code>match()</code> 返回共享 block（加 ref）</td><td><code>match()</code> 返回 pin，worker <strong>拷贝</strong>进新 live slot（不可共享，必须拷）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          一句话：<strong>save 侧靠 scheduler 零拷贝换手，restore 侧靠 worker 真拷贝</strong>——两半不对称，是本文所有细节的根源。
+        </p>
+        <div class="callout">
+          本文对应已发布的设计报告
+          <a href="../../reports/qwen35-linear-prefix-cache-pr1839/">Qwen3.5 Linear-State Prefix Cache（PR #1839）</a>；
+          block / slot 管理背景见 <a href="../kv-cache-block-management/">KV Cache Block 管理架构</a>；
+          整体执行流见 <a href="../xllm-execution-pipeline/">xLLM 推理执行主干</a>。
+        </div>
+      </section>
+
+      <section id="overview">
+        <h2>1. save / restore 闭环全景</h2>
+        <pre class="ascii"><code>          LinearStatePrefixCache（scheduler 侧，每 dp_rank 一个）
+          内部一个 SingleBlockManager 管全部物理 slot [0, num_slots)
+          free / live / checkpoint 三态共享同一 id 空间
+          ┌───────────────────────────────────────────────────────────┐
+                    ▲ allocate_live_slot            │ match(hash) 命中
+                    │ 分配空 slot 给运行序列          ▼ pin 住 checkpoint
+   ┌──────────┐ set │  ┌──────────┐   promotion    ┌──────────────┐
+   │ 序列 A    │◄────── │ live slot│───────────────►│ checkpoint   │
+   │ 运行中    │ 持有   │ 私有,     │  晋升（换手）    │ 公共,冻结,    │
+   └──────────┘        │ 原地覆写  │                │ LRU 可回收    │
+        │              └──────────┘                └──────────────┘
+        │ 第一次 forward 且复用块对齐前缀                    │
+        │ → restore: worker 把 checkpoint 拷进我的 live slot │
+        └───────────────────────────────────────────────────┘
+             restore 是真拷贝，因为 GDN state 不可共享</code></pre>
+        <p>
+          左半是 save（scheduler 侧 promotion，零拷贝），右半是 restore（worker 侧跨层拷贝）。中间那个 <code>SingleBlockManager</code> 用同一片 id 空间管理三种状态的 slot，靠引用计数和所属容器区分。
+        </p>
+      </section>
+
+      <section id="slots">
+        <h2>2. 两个 slot 概念，务必分清</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>概念</th><th>谁持有</th><th>特征</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>live slot</strong></td>
+                <td>运行序列（<code>Sequence::linear_state_slot_</code>）</td>
+                <td>worker 每步原地覆写；私有</td>
+              </tr>
+              <tr>
+                <td><strong>checkpoint slot</strong></td>
+                <td>prefix cache（<code>cached_slots_</code>）</td>
+                <td>冻结某前缀边界的 state；可被 LRU 回收、可被后来请求 restore</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          两者<strong>共享同一物理 id 空间</strong>（同一个 <code>SingleBlockManager</code>），靠 ref_count + 所属容器区分状态。理解「promotion 是把一个 slot 从 live 身份换成 checkpoint 身份」是读懂后面所有内容的前提。
+        </p>
+      </section>
+
+      <section id="save">
+        <h2>3. save 路径：promotion 零拷贝换手</h2>
+        <p>
+          "promotion（晋升）"的字面含义：一个 slot 本是某序列<strong>私有的 live slot</strong>（正被覆写），prefix cache 把它"晋升"为<strong>公共的 committed checkpoint</strong>（冻结、可被 restore、可被 LRU 回收）。身份从「私有运行态」升格为「公共缓存态」。
+        </p>
+
+        <h3>3.1 为什么必须延迟到 forward 之后</h3>
+        <p>
+          promotion 不能在调度阶段就换手，因为那时 slot 里还是<strong>上一步</strong>的内容。这一步的 forward 才会写入「块对齐边界的最终 recurrent state」——那才是要冻结的 checkpoint。所以拆成两阶段：<strong>resolve</strong> 阶段（forward 前）只<em>预定</em>哪些 slot 要晋升；<strong>commit</strong> 阶段（forward 后）才真正换手。
+        </p>
+        <pre class="ascii"><code>一个 step 的生命周期
+════════════════════════════════════════════════════════════════
+
+ [调度阶段]              [forward 阶段]         [forward 之后]
+ resolve_cache_ops       worker 跑模型          commit_reservations
+                         覆写 live slot
+──────────────────────►─────────────────────►──────────────────────► 时间
+
+ 决定: slot 7 本步末尾   模型把"块对齐边界的     此刻 slot 7 里 =
+ 要晋升成 checkpoint     最终 recurrent state"  "本步结束的正确内容"
+ ① 预分配新空 slot 9     写进 slot 7            ↓ 换手（见 3.2）:
+ ② 记 Promotion{hash,                           - slot7 晋升 checkpoint
+     seq, live_slot=7,                           - 序列改持 slot9
+     replacement=9}                              - slot9 标冷
+   暂不动序列!</code></pre>
+
+        <h3>3.2 换手三步</h3>
+        <pre class="ascii"><code>换手前:                          换手后:
+ 序列 ──持有──→ [slot 7]         序列 ──持有──→ [slot 9]（新,空,冷）
+                ↑刚算好的
+                 块对齐 state     [slot 7] ←─pin── prefix cache
+                                          committed checkpoint, hash=H</code></pre>
+        <ol>
+          <li><strong>move 出、不 free</strong>：把 slot 7 从序列身上 move 出来（<code>reset_linear_state_slot</code>），<em>但不还回 free list</em>。</li>
+          <li><strong>晋升为 checkpoint</strong>：<code>insert_checkpoint(hash, slot7)</code>，slot 7 进入 cache 表，可被后续请求命中。</li>
+          <li><strong>换新 slot + 标冷</strong>：序列改持预分配好的 slot 9，并把冷暖位重置为冷（见 §5）。</li>
+        </ol>
+        <div class="callout warning">
+          <strong>第①步「move 出但不 free」是关键：</strong>如果用普通的「erase 后 free」语义，会先把 slot 还回 free list，随即可能被别的序列分走并覆写——checkpoint 内容就被腐蚀了。零拷贝 save 依赖「所有权转移而非释放」。
+        </div>
+
+        <h3>3.3 resolve 阶段会放弃哪些 save</h3>
+        <p>「想 save」不等于「真 save」。resolve 阶段会跳过这几类：</p>
+        <ul>
+          <li><strong>去重</strong>：同一批里多个序列想存同一 hash，只晋升一次。</li>
+          <li><strong>已在 cache</strong>：该前缀已有 committed checkpoint，跳过。</li>
+          <li><strong>晋升条件不满足</strong>：<code>can_promote</code> 判定失败。</li>
+          <li><strong>无空闲替补 slot</strong>：预分配 replacement 失败则跳过这次 save——保持 cache 稀疏，而不是强行 LRU 驱逐现有 checkpoint。</li>
+        </ul>
+        <p>
+          promotion <strong>不是可选优化层，就是 save 机制本身</strong>。不要 promotion 就意味着要么不存 checkpoint（prefix cache 形同虚设），要么用一次额外 device copy 来存（正是 promotion 要省掉的那次拷贝）。它和 KV 零拷贝 insert 同哲学，只因 GDN 不可共享而多了「换手」这一步。
+        </p>
+      </section>
+
+      <section id="restore">
+        <h2>4. restore 路径：worker 侧跨层拷贝</h2>
+        <p>
+          save 是 scheduler 零拷贝换手，restore 却<strong>必须</strong>在 worker 侧做真拷贝——因为 recurrent state 不可共享，命中的 checkpoint 内容得实打实复制进当前请求的 live slot。
+        </p>
+        <pre class="ascii"><code>┌── scheduler 侧（先跑）──────────────┐   ┌── worker 侧 ─────────────┐
+│ resolve_cache_ops                  │   │ restore_linear_state_slots│
+│  - 算 prefix hash → 查表           │ → │  - discover_num_slots     │
+│  - 命中: 把 src_slot_id 写进 op    │   │  - 跨层 narrow/copy_      │
+│  - 不命中: src_slot_id 保持 -1     │   │  - 就地写 has_initial_state│
+└─────────────────────────────────────┘   └───────────────────────────┘</code></pre>
+
+        <h3>4.1 has_initial_state：给 kernel 的冷/暖开关</h3>
+        <p>
+          GDN kernel 靠一个 <code>has_initial_state</code> 向量决定是否把 recurrent <code>initial_state</code> 清零：<code>1</code> = 暖（用 slot 里已有 state），<code>0</code> = 冷（从零起算）。它的<strong>默认值</strong>预填为「这一行是否复用了 KV cache token」——复用了 KV 的请求默认被当作暖。restore 函数只<strong>覆盖</strong>它必须改的项。
+        </p>
+
+        <h3>4.2 三路语义（正确性核心）</h3>
+        <p>逐 op 判定，走三条路之一：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>路</th><th>触发条件</th><th>对 has_initial_state 的动作</th><th>语义</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>SKIPPED</strong></td>
+                <td>没请求 restore 且无源 slot</td>
+                <td><strong>不动</strong>（保留默认）</td>
+                <td>续跑请求 / 零前缀冷启：无 checkpoint 可恢复，保留 KV cache 默认值</td>
+              </tr>
+              <tr>
+                <td><strong>COLD_START</strong></td>
+                <td>请求了 restore 但源 slot 无效 / 越界 / 拷贝失败</td>
+                <td><strong>= 0</strong></td>
+                <td>强制冷启，避免把复用的 KV block 误当暖 recurrent state</td>
+              </tr>
+              <tr>
+                <td><strong>RESTORED</strong></td>
+                <td>拷贝成功</td>
+                <td><strong>= 1</strong></td>
+                <td>checkpoint 已拷进 live slot，标记为暖</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warning">
+          <strong>为什么 SKIPPED 必须"不动"而不是"写 0"：</strong>续跑（decode 中）请求的 live slot 本来就是暖的，它没请求 restore 恰恰是因为它不需要拷贝。若 SKIPPED 也写 0，会把暖续跑请求错误地冷启，输出立刻错乱。三路不能合并，是正确性问题而非代码风格。
+        </div>
+
+        <h3>4.3 跨层拷贝与跨流衔接</h3>
+        <p>
+          拷贝遍历所有层：对每个 linear 层，把 conv cache 的 src slot 拷进 dst slot；ssm 按 checkpoint stride 做 <code>narrow().copy_()</code>。纯 attention 层（conv/ssm 未定义）跳过。若一层都没拷到，说明「有 linear 层」这个不变量破了，当作软失败回退冷启，不崩服务。
+        </p>
+        <p>
+          这条拷贝 enqueue 在 worker 的 prepare stream 上，<strong>不在此处做 host sync</strong>；caller 负责在 forward 消费这些 slot 前插一个 stream-event barrier。这与 KV cache 侧的 H2D 写入同构（都在 prepare stream、都靠 event 与 forward 衔接），不是 linear-state 独有的额外等待。
+        </p>
+      </section>
+
+      <section id="initialized">
+        <h2>5. linear_state_initialized：live slot 的冷/暖位</h2>
+        <p>
+          这是一个绑在序列上的 bool，表示当前 live slot 里<strong>是否已装有效 recurrent state</strong>。注意它<strong>不是</strong>「slot 是否存在」（那是看 Block 是否 valid），而是「slot <em>内容</em>是否有效」——slot 一分配就有合法 id，但内容是空的，这两件事必须分开。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>时机</th><th>操作</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td>创建 / reset</td><td>置 false</td><td>新 slot，冷</td></tr>
+              <tr><td>每次 forward 末尾</td><td>置 true</td><td>之后 slot 有 state，别再 restore</td></tr>
+              <tr><td>promotion 换新 slot 后</td><td>置 false</td><td>换了新空 slot，又冷</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>它唯一的用途</strong>是 gate「cold-start restore 只发一次」：</p>
+        <pre><code>needs_restore = !linear_state_initialized
+             && n_kv_cache_tokens > 0
+             && n_kv_cache_tokens % block_size == 0;</code></pre>
+        <div class="callout warning">
+          <strong>为什么不能删（硬反证）：</strong>删掉这个 gate，restore 条件退化成「只要块对齐就 restore」。decode 阶段 <code>n_kv_cache_tokens</code> 持续增长，<strong>每隔 block_size 就块对齐一次</strong> → 每次都发 restore → worker 把 live slot 覆盖成 checkpoint 旧 state → decode 已累积的 recurrent state 被冲掉 → 输出错乱。
+        </div>
+        <p>
+          <strong>为什么不能用「第几次 forward」之类序列级信号替代：</strong>promotion 那条路堵死了。promotion 给序列换新空 slot 时，序列<em>早已 forward 多次</em>，但新 slot 物理上是冷的。任何序列级信号都无法表达「换了 slot 所以又冷」——只有绑定 slot 内容的标志能做到。这个 bool 编码的是 slot 的物理属性，跟着 slot 走。
+        </p>
+      </section>
+
+      <section id="contract">
+        <h2>6. scheduler↔worker 契约：四字段结构体</h2>
+        <p>
+          <code>LinearStateCacheOp</code> 是<strong>每个 batch row 一个</strong>的小结构体，是 scheduler 把「这一行该不该 restore / 该不该 save、源/目标物理 slot 是谁」传给 worker 的唯一载体。它在 scheduler 侧构造，随 model input params 发到 worker 执行。四个核心字段是两组对称的 hash + slot_id：
+        </p>
+        <pre><code class="language-cpp">struct LinearStateCacheOp {
+  // 这一行的 live slot（本步覆写目标）
+  int32_t linear_state_id = -1;
+
+  // restore: 从哪个前缀 hash 恢复，scheduler 解析出的源 slot
+  // worker 把 restore_src_slot_id 拷进 linear_state_id
+  LinearStatePrefixHash restore_prefix_hash{};   // 非零 → 请求 restore；查表 key
+  int32_t restore_src_slot_id = -1;              // resolve 查出的源 slot
+
+  // save: 要 checkpoint 的前缀 hash，scheduler 决定 promote 后的旧 live slot
+  LinearStatePrefixHash save_prefix_hash{};      // 非零 → 请求 save；cache key
+  int32_t save_dst_slot_id = -1;                 // resolve 决定 promote 后的旧 live slot
+};</code></pre>
+        <div class="callout">
+          <strong>两组对称字段的由来：</strong>restore 和 save 是镜像操作，各配一个 hash（逻辑 / 查表）+ 一个 slot_id（物理 / 执行）。但两组的「拷贝方向」和「谁来拷」完全不同——restore 在 worker 真拷贝，save 在 scheduler 零拷贝换手。这正是它们省不掉、也不完全对称的根因。
+        </div>
+
+        <h3>6.1 为什么 hash 省不掉</h3>
+        <p>高频疑问：「能不能只留 slot_id，把两个 hash 删掉？」不能，三条独立理由：</p>
+        <ul>
+          <li>
+            <strong>restore：hash 是因，slot_id 是果。</strong>build 阶段只有 token_ids，能算出 <code>restore_prefix_hash</code>（前缀内容指纹），但「哪个物理 slot 存了这段前缀？」只有 prefix cache 的 <code>hash → slot</code> 映射知道。必须拿 hash 去 <code>match()</code> 才能解析出 <code>restore_src_slot_id</code>。删掉 hash，没有任何东西能查出源 slot。
+          </li>
+          <li>
+            <strong>save：hash 就是 cache 的 key。</strong>commit 阶段 <code>insert_checkpoint(hash, slot)</code> 用它作索引存进 cache。prefix cache 的本质是<em>内容寻址</em>：未来请求用前缀内容的 hash 找物理资源。只存 slot_id 不存 hash，cache 退化成「一堆没索引的 slot」，等于没有 cache。
+          </li>
+          <li>
+            <strong>hash 还兼任「是否请求该操作」的标志。</strong>worker 判 restore 是否发生看 <code>restore_prefix_hash</code> 是否非零，判 save 看 <code>save_prefix_hash</code> 非零（作副条件）。这个「零值约定」让单个 op 能携带 restore-only / save-only / 两者 / 皆无四种组合，无需额外 enum。
+          </li>
+        </ul>
+        <p>
+          反过来也不能「只留 hash 删 slot_id」：worker 是 thin executor，跨层拷贝要的是具体整数 slot 号，而且 worker <strong>不持有</strong> <code>hash → slot</code> 映射（那在 scheduler 侧）。必须把 scheduler 解析好的 slot_id 传过去。
+        </p>
+        <div class="callout">
+          <strong>分层本质：</strong><code>hash</code> = 逻辑 / 内容层标识，跨请求跨时间稳定，是 cache 的键，scheduler 用它内容寻址；<code>slot_id</code> = 物理层标识，某次具体分配的瞬时结果，worker 用它做物理操作。scheduler（逻辑寻址）与 worker（物理执行）是分离主体，两层标识都得有。
+        </div>
+
+        <h3>6.2 唯一可商榷的字段：save_dst_slot_id</h3>
+        <p>
+          四字段里只有这个有「冗余味」，但它不是死字段。它的值在主路径恒等于 <code>linear_state_id</code>（命名 <code>dst</code> 有误导：worker 没把它当拷贝目标，save 也没有 worker 拷贝）。它真正的用途是被 worker 读作「<strong>resolve 确认了 save 真会发生</strong>」的标志。
+        </p>
+        <p>
+          这个语义不能用 <code>save_prefix_hash != 0</code> 替代——hash 非零只代表 build 阶段「<em>想</em> save」，而 resolve 可能放弃这次 save（见 §3.3 的四类跳过）。这些情况下 hash 仍非零，但 promotion 没建、<code>save_dst_slot_id</code> 保持 -1。worker 靠 <code>save_dst_slot_id >= 0</code> 判「本步真有 promotion」。所以它承载的是 resolve 的决策结果，理论上可以用一个 <code>bool will_promote</code> 表达，当前设计复用了 slot_id 字段的对称模式来携带这个信号。
+        </p>
+      </section>
+
+      <section id="pipeline">
+        <h2>7. 四阶段流水线：字段在哪一棒出生、哪一棒消费</h2>
+        <p>
+          一个 step 内，这个结构体被四个阶段接力读写。<strong>hash 在最早一棒（build）就得填，那时 slot_id 还全是 -1</strong>——这是「hash 不能省」最直接的物理事实。
+        </p>
+        <pre class="ascii"><code> 阶段① BUILD          阶段② RESOLVE        阶段③ FORWARD       阶段④ COMMIT
+ scheduler/主线程      scheduler/主线程     worker/子进程       scheduler/主线程
+ ──────────────────   ──────────────────  ────────────────    ──────────────────
+ 只有 token_ids,      拿 hash 去查/占槽,   只认整数槽号,       forward 写完旧槽后,
+ 能算 hash 不知 slot  把结果回填 slot_id   做物理拷贝          真正换手 promote
+
+ linear_state_id  ──┬────（读,校验）──────►（读,拷贝 dst）───►（读,校验）
+                    │
+ restore_hash ≠0 ───┼─► match(hash) ──────►（读,restore? 标志）
+                    │      │
+                    │      └─► restore_src_slot_id = 命中槽 ──►（读,拷贝 src）
+                    │            （阶段②才出生）
+                    │
+ save_hash ≠0 ──────┴─► 查重 ─────────────────────────────────► insert_checkpoint(
+                          │                                       hash, 旧槽)
+                          └─► save_dst_slot_id = 旧 live 槽 ──►（读,"本步有 save"标志）
+                                （阶段②才出生）</code></pre>
+        <div class="callout">
+          <strong>一句话读图：</strong>两个 <code>hash</code> 是阶段①（build）就必须带上的<em>输入</em>，因为那是唯一知道前缀内容、却还不知道物理 slot 的时刻；两个 <code>slot_id</code> 是阶段②（resolve）用 hash 查表后才回填的<em>输出</em>。先有 hash（因），后有 slot_id（果）。
+        </div>
+
+        <h3>7.1 关键非对称，为什么不能机械对称地省字段</h3>
+        <ul>
+          <li>
+            <code>restore_src_slot_id</code> 由 <code>match()</code> <strong>查出</strong>，是历史 checkpoint slot；<code>save_dst_slot_id</code> = 序列<strong>已持有</strong>的旧 live slot，不是新分配的。save 真正新分配的是<em>替补 slot</em>，它不进 op、只进 promotion 预定，commit 时才换给序列。
+          </li>
+          <li>
+            restore 在 worker <strong>真做 device 拷贝</strong>；save 在 scheduler <strong>零拷贝换手</strong>，worker 不拷。这就是为什么 <code>save_dst_slot_id</code> 在 worker 侧只当标志用。
+          </li>
+        </ul>
+
+        <h3>7.2 结论</h3>
+        <p>
+          <code>hash</code> 是 scheduler 做内容寻址的查询键 / cache 键（build 阶段唯一能提供的信息，且兼任 restore/save 请求标志），<code>slot_id</code> 是 scheduler 用 hash 查表后回填、传给 worker 做物理拷贝的执行参数——因（hash）与果（slot_id）、逻辑层与物理层、调度主体与执行主体，缺一不可。真要精简，只有 <code>save_dst_slot_id</code> 像个可优化的 flag，但那和「用 slot id 取代 hash」是两回事。
+        </p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

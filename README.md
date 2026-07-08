@@ -24,7 +24,7 @@ xllm-notes/
 | 分区 | slug 规则 | 例 |
 |------|-----------|-----|
 | `reports/` | `<特性>-pr<编号>`,无 PR 就 `<特性>` | `qwen35-linear-prefix-cache-pr1839` |
-| `notes/` | `<主题>`,**不加**日期前缀 | `linear-state-prefix-cache` |
+| `notes/` | `<主题>`,**不加**日期前缀 | `linear-state-prefix-cache-internals` |
 
 - 每个条目是「一个目录 + `index.html`」,URL 干净不带 `.html`(`/reports/<slug>/`)。
 - 条目要配图片/附件时,直接丢进它自己的目录,不污染别人。

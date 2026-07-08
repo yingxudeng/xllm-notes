@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xLLM NPU 推理执行主干 · xLLM Notes</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+      --terra-soft: #f6e5df;
+      --code-bg: #f5f6f8;
+      --code-ink: #24304a;
+      --code-line: #dde2ec;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1, h2, h3, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--indigo-deep); border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+    .brand a { color: #fff; }
+    .topbar .crumb { color: #aeb6d4; font-size: 13px; }
+    .topbar .crumb a { color: #aeb6d4; }
+
+    .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header { padding: 44px 0 30px; border-bottom: 2px solid var(--indigo-deep); }
+    .eyebrow {
+      display: inline-block; color: var(--terra); font-size: 12px;
+      font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+    .subtitle { max-width: 900px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      display: inline-flex; align-items: center; min-height: 28px;
+      padding: 3px 11px; border: 1px solid var(--line); border-radius: 2px;
+      background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 600;
+    }
+    .tag.accent { color: var(--terra); border-color: #e6c9a8; background: var(--terra-soft); }
+
+    nav.toc {
+      position: sticky; top: 55px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 22px 0 30px; padding: 12px 14px;
+      background: rgba(236, 239, 244, 0.92); backdrop-filter: blur(6px);
+      border: 1px solid var(--line); border-radius: 3px;
+    }
+    nav.toc a {
+      padding: 4px 11px; border-radius: 2px; color: var(--muted);
+      font-size: 13.5px; font-weight: 600;
+    }
+    nav.toc a:hover { background: var(--indigo); color: #fff; text-decoration: none; }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative; margin-bottom: 22px; padding: 30px 30px 30px 34px;
+      border: 1px solid var(--line); border-left: 4px solid var(--indigo);
+      border-radius: 3px; background: var(--surface);
+    }
+
+    h2 { margin: 0 0 16px; font-size: 25px; line-height: 1.28; color: var(--indigo-deep); }
+    h3 { margin: 24px 0 10px; font-size: 18px; line-height: 1.35; color: var(--terra); }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    .callout {
+      margin: 18px 0; padding: 15px 18px; border: 1px solid #c2c8f0;
+      border-left: 4px solid var(--indigo); border-radius: 2px; background: #eef0fd;
+    }
+    .warning { border-color: #e6c9a8; border-left-color: var(--terra); background: var(--terra-soft); }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 3px; }
+    table { width: 100%; border-collapse: collapse; min-width: 640px; background: var(--surface); }
+    th, td {
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      vertical-align: top; text-align: left; font-size: 14px;
+    }
+    th { background: var(--indigo-deep); color: #fff; font-weight: 700; border-bottom: none; }
+    tbody tr:nth-child(even) { background: var(--surface-alt); }
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px; border-radius: 2px; background: #e8ebf3; color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto; margin: 16px 0; padding: 18px;
+      border: 1px solid var(--code-line); border-left: 3px solid var(--terra);
+      border-radius: 3px; background: var(--code-bg); color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12.5px; line-height: 1.55;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+    pre.ascii { line-height: 1.35; }
+
+    .mermaid { border: 1px solid var(--line); border-radius: 3px; background: #fbfcfe; color: var(--ink); }
+    .flow-diagram { min-height: 420px; padding: 16px; }
+    .flow-diagram svg {
+      display: block; width: min(100%, 1000px) !important;
+      max-width: none !important; height: auto !important; margin: 0 auto;
+    }
+
+    @media (max-width: 920px) {
+      nav.toc { position: static; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar, nav.toc { display: none; }
+      .page { max-width: none; padding: 0; }
+      section { break-inside: avoid; border-left-width: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><a href="../../">xLLM Notes</a></span>
+      <span class="crumb">/ notes / xllm-execution-pipeline</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Knowledge · Inference Runtime</div>
+      <h1>xLLM NPU 推理执行主干</h1>
+      <p class="subtitle">
+        一次 forward 从调度到采样要穿过哪些阶段：<code>step → prepare → forward → sample</code>，外加 MTP 投机分支与 ACL Graph 的 capture/replay。这是读懂 worker/executor 层其它话题的地图。
+      </p>
+      <div class="meta">
+        <span class="tag accent">Note</span>
+        <span class="tag">Runtime</span>
+        <span class="tag">NPU</span>
+        <span class="tag">执行流程</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#overview">一页全景</a>
+      <a href="#step">step 入口</a>
+      <a href="#prepare-host">prepare · host</a>
+      <a href="#prepare-device">prepare · device</a>
+      <a href="#forward">forward</a>
+      <a href="#sample">sample</a>
+      <a href="#mtp">MTP 投机</a>
+      <a href="#streams">流模型</a>
+    </nav>
+
+    <main>
+      <section id="overview">
+        <h2>0. 一页全景</h2>
+        <p>
+          从 scheduler 攒出一个 batch，到把采样结果写回 sequence，中间是一条清晰的四段流水线。先建立这张整体图，后面各节再逐段展开。
+        </p>
+        <pre class="ascii"><code>Scheduler 攒出 Batch（一组 Sequence）
+        │
+        ▼  Executor::prepare_inputs(batch)
+┌───────────────────────────────────────────────────────────┐
+│ prepare 阶段（host → device 元数据构造）                     │
+│  Batch::prepare_forward_input                               │
+│   └ BatchInputBuilder::build_forward_input                  │
+│       ├ process_sequences   逐序列攒 host vector（可多线程） │
+│       │   ├ extract_tokens_and_positions  token/position    │
+│       │   └ setup_kv_cache_info   slot_mapping/block_tables  │
+│       ├ padding_decode_batch_size                           │
+│       └ state_to_forward_input   host vector → ForwardInput  │
+└───────────────────────────────────────────────────────────┘
+        │  ForwardInput（CPU host tensors）
+        ▼  WorkerImpl::step → step_internal
+┌───────────────────────────────────────────────────────────┐
+│ prepare_work_before_execute（在 prepare_stream 上）          │
+│  ├ to(device)   H2D，host → NPU                             │
+│  ├ CP/DP/EP padding                                         │
+│  ├ apply_kv_block_swaps                                     │
+│  └ 各类模型专有 device 侧准备                                │
+│  → record_event()  给 forward 流做跨流 barrier              │
+└───────────────────────────────────────────────────────────┘
+        │  ForwardInput（device tensors）
+        ▼  Executor::forward → ExecutorImpl::run
+┌───────────────────────────────────────────────────────────┐
+│ forward 阶段                                                │
+│  base: model_->forward(...)  eager                          │
+│  acl_graph: decode / spec-verify → capture-or-replay        │
+│  → ModelOutput{ hidden_states, ... }                        │
+└───────────────────────────────────────────────────────────┘
+        │  hidden_states
+        ▼
+   model_->logits(hidden, selected_token_idxes)  只取要采样的行
+        │  logits
+        ▼  Sampler::forward
+   penalties → top-k/top-p → softmax → greedy/random/mixed
+        │  SampleOutput{ next_tokens, logprobs, ... }
+        ▼
+   ForwardOutput  回 scheduler（写回 token、推进 sequence）</code></pre>
+        <div class="callout">
+          <strong>四段产物一句话：</strong>prepare(host) 产出 CPU 张量的 <code>ForwardInput</code>；prepare(device) 把它 H2D 成设备张量并埋好 ready event；forward 产出 <code>hidden_states</code>；sample 产出 <code>next_tokens</code>。
+        </div>
+      </section>
+
+      <section id="step">
+        <h2>1. 入口：step 链</h2>
+        <p>
+          <code>WorkerImpl::step</code> 是纯虚接口，LLM 的实体在 <code>LLMWorkerImpl::step</code>：取当前 stream → 等 input ready events → 进入 <code>step_internal</code>。<code>step_internal</code> 是真正的主干：
+        </p>
+        <ol>
+          <li><strong>（PD PUSH 模式）</strong>先起一个 kv_cache 传输 future。</li>
+          <li><strong>forward</strong>：<code>model_executor_-&gt;forward(token_ids, positions, kv_caches_, input_params)</code> → <code>ModelOutput</code>。<code>hidden_states</code> 未定义则返回 nullopt。</li>
+          <li><strong>logits</strong>：若 <code>sampling_params.selected_token_idxes</code> 定义，只对需要采样的行算 lm_head，省算力。</li>
+          <li><strong>sample</strong>：<code>sampler_-&gt;forward(logits, sampling_params)</code>，可选 beam search。</li>
+          <li><strong>speculative</strong>：开启投机解码时走 MTP 分支（见 §6）。</li>
+          <li>非 driver / 非 overlap / 非 spec 的纯计算 worker 提前返回 nullopt，只有 driver 组装 <code>ForwardOutput</code>。</li>
+        </ol>
+        <div class="callout">
+          <strong>三种 step 变体：</strong>同步的 <code>step</code>；异步的 <code>step_async_no_sync</code>（先 prepare，再把计算丢进 threadpool）；schedule-overlap 模式用 <code>step_for_schedule_overlap</code>。三者共用 <code>step_internal</code> 主干，区别在同步点与线程落点。
+        </div>
+      </section>
+
+      <section id="prepare-host">
+        <h2>2. prepare 阶段（一）：host 张量构造</h2>
+        <p>
+          入口委托链：<code>Executor::prepare_inputs</code> → <code>BaseExecutorImpl::prepare_inputs</code> → <code>Batch::prepare_forward_input</code> → <code>BatchInputBuilder::build_forward_input</code>。ACL Graph 的 executor 覆写了 <code>prepare_inputs</code> 但实现与 base 一致——分桶逻辑在 <code>run()</code> 里，不在 prepare。
+        </p>
+
+        <h3>2.1 process_sequences</h3>
+        <p>
+          逐 <code>Sequence</code> 调 <code>process_single_sequence</code>；序列数达到线程池规模时多线程并行，每线程独立 <code>BuilderState</code>，最后按 offset 合并。核心两个子步：
+        </p>
+        <p><strong><code>extract_tokens_and_positions</code></strong> —— prefill / decode 分叉的根：</p>
+        <pre><code>for (uint32_t j = n_kv_cache_tokens; j &lt; seq_len; ++j) {
+  state.flatten_tokens_vec.emplace_back(token_ids[j]);
+  state.flatten_positions_vec.push_back(j);
+}</code></pre>
+        <ul>
+          <li><strong>prefill</strong>：<code>n_kv_cache_tokens = 0</code>（或 = 已命中前缀长度），取 <code>[n_kv_cache_tokens, seq_len)</code> 整段 prompt。</li>
+          <li><strong>decode</strong>：<code>n_kv_cache_tokens = seq_len - 1</code>，只取最后 1 个 token。</li>
+          <li>采样选择器：非采样请求只在最后一个 prompt token 落一个 sampling entry；采样请求按 <code>sample_slots</code> 落多个。</li>
+          <li>CP 右 padding、MTP bootstrap embedding 也在这里。</li>
+        </ul>
+        <p><strong><code>setup_kv_cache_info</code></strong> —— KV 寻址元数据：</p>
+        <ul>
+          <li><code>incr_kv_cache_tokens_num(q_seq_len)</code> 推进该序列已缓存 token 数。</li>
+          <li><code>kv_cache_slots(...)</code> → <code>new_token_slot_ids</code>，即 <strong>slot_mapping</strong>：新 token 写进物理 cache 的槽位。</li>
+          <li>遍历 blocks 攒 <code>block_ids</code> → <code>block_tables_vec</code>，并填 paged_kv 三件套（<code>indptr</code> / <code>indices</code> / <code>last_page_len</code>）。</li>
+        </ul>
+
+        <h3>2.2 padding_decode_batch_size</h3>
+        <p>decode 批按 <code>min_decoding_batch_size</code> 补齐，对 graph 分桶友好。</p>
+
+        <h3>2.3 state_to_forward_input</h3>
+        <p>
+          把所有 host vector 装成 <code>ForwardInput</code>（此时还是 CPU tensor），含 token_ids、positions、<code>input_params</code>（attention metadata、parallel、embedding 等子结构）、sampling_params。
+        </p>
+      </section>
+
+      <section id="prepare-device">
+        <h2>3. prepare 阶段（二）：H2D + 设备侧准备</h2>
+        <p>
+          <code>WorkerImpl::prepare_work_before_execute</code> 全程在 <code>prepare_stream_</code> 上，核心是内部 lambda <code>prepare_device_on_stream</code>：
+        </p>
+        <ol>
+          <li><strong><code>processed_input = prep_for_device.to(device_, dtype_)</code></strong>：整个 ForwardInput 一次性 H2D。</li>
+          <li><code>ensure_forward_input_device_tensors</code>：补齐 device 张量。</li>
+          <li><strong>CP prefill 侧</strong>（<code>cp_size &gt; 1</code> 且非 decode）：prefill 输入准备、CP/EP padding、KV split 重映射（非幂等，靠 <code>!cp_partitioned</code> 保证只跑一次）。</li>
+          <li>空 shard 造假输入，避免多卡某 rank 空批挂住集合通信。</li>
+          <li><strong><code>apply_kv_block_swaps</code></strong>：换页 / 拷贝。</li>
+          <li><strong>MLA</strong>：chunked prefill 下的 prefix-cache 输入准备。</li>
+          <li><strong>DP/EP padding</strong>。</li>
+          <li><strong>模型专有 device 侧准备</strong>：例如线性注意力（GDN）类模型在此恢复 recurrent state slot。</li>
+        </ol>
+        <div class="callout warning">
+          <strong>跨流衔接：</strong>lambda 结束后 <code>record_event()</code>，forward 在另一条流上 await 这个 event，保证它看到上面所有 device 写入完成。NPU 下开启 graph 时整段被 <code>DeviceCaptureLock</code> 保护，防止 capture 被异步 H2D 打断。
+        </div>
+      </section>
+
+      <section id="forward">
+        <h2>4. forward 阶段：eager vs ACL Graph</h2>
+        <p>
+          <code>Executor::forward</code> → <code>impl_-&gt;run(...)</code>。backend 选择：开启 graph 且非 vlm 时，NPU 下走 <code>AclGraphExecutorImpl</code>；否则走 base（eager）/ vlm。
+        </p>
+
+        <h3>4.1 base（eager）</h3>
+        <p>直接 <code>model_-&gt;forward(tokens, positions, kv_caches, params)</code>。</p>
+
+        <h3>4.2 ACL Graph</h3>
+        <p><strong>何时用 graph</strong>（否则 eager fallback）：decode 阶段，或 spec-verify + chunked prefill 的特定模型。fallback 条件包括：普通 chunked prefill、单层模型、DP 多 rank 非全 decode、batch 超过 decode 上限、序列超过最大位置。</p>
+        <p><strong>bucket 分桶</strong>：按 num_tokens 归入 1 / 2 / 4 / 8 / 向上取整到 16 的倍数；关闭 padding 时每个真实 token 数独立建图。</p>
+        <pre class="ascii"><code>capture（首次遇到某 bucket key）:
+  1. 把 tokens/positions/block_tables 等拷进预分配的持久 buffer，
+     返回引用这些固定地址的 graph_params
+  2. 切到 high-priority capture_stream → capture_begin
+     → model->forward(persistent_tokens, ..., graph_params)
+     → set_hidden_states → capture_end
+  3. test replay + 让当前流等待 graph
+
+replay（命中 bucket）:
+  1. 把当前 batch 的实际数据 non_blocking 写入
+     capture 时记录的同一持久 buffer 地址 ← 绑定机制
+  2. graph.replay()  复用 mempool 内全部临时 tensor，重跑算子序列
+  3. 让当前流等待 graph → 返回 hidden_states 切片</code></pre>
+        <div class="callout">
+          <strong>持久 buffer 是关键：</strong>capture 时算子序列被"录制"下来，引用的是固定地址；replay 时只把新数据写进那些同样的地址再重放，因此避免了每步重新构图的开销。
+        </div>
+      </section>
+
+      <section id="sample">
+        <h2>5. sample 阶段</h2>
+        <p><code>Sampler::forward</code> 的处理顺序：</p>
+        <ol>
+          <li>frequency / presence penalty、repetition penalty。</li>
+          <li>若 <code>selected_token_idxes != sample_idxes</code>，index_select 出要采样的子集。</li>
+          <li>可选 filter_mask 相加。</li>
+          <li><code>apply_top_k_top_p</code>。</li>
+          <li><code>softmax</code> → 按 all-random / all-greedy / mixed（<code>torch::where(do_sample, random, greedy)</code>）出 samples。</li>
+          <li>logprobs / top_logprobs。</li>
+        </ol>
+        <p>
+          输出 <code>SampleOutput{ next_tokens, probs, logprobs, top_tokens, top_logprobs }</code>，装进 <code>ForwardOutput</code> 回 scheduler。
+        </p>
+      </section>
+
+      <section id="mtp">
+        <h2>6. MTP 投机分支</h2>
+        <p>
+          结构上是 <code>MTPWorkerImpl → SpeculativeWorkerImpl → WorkerImpl</code> 的继承链。<code>SpeculativeWorkerImpl</code> 持 target worker；<code>MTPWorkerImpl</code> 额外持 draft worker（1 层）+ <code>embedding_cache_</code>。入口 <code>SpeculativeWorkerImpl::step</code> 按 empty / prefill / decode 分发。
+        </p>
+        <h3>draft 阶段（循环 num_speculative_tokens 次）</h3>
+        <ul>
+          <li>第 1 步：从 <code>EmbeddingCache</code> 取上一 step 的 target hidden state 作 embedding，构造双行 extend 输入。</li>
+          <li>第 k&gt;0 步：把上一 draft 输出 <code>next_tokens</code> 喂回，hidden 也取自上一 draft 输出。</li>
+          <li>draft KV cache 独立按固定容量分配，不走 prefix cache 查找；draft probs 每步压成 selected-only。</li>
+        </ul>
+        <h3>verify 阶段</h3>
+        <ul>
+          <li>每序列展开 <code>num_speculative_tokens + 1</code> 行，token = <code>[current, -1, -2, ...]</code>（负数 placeholder）。</li>
+          <li>placeholder 被实际 draft token 覆盖后，target 一次 forward 并行 verify。</li>
+        </ul>
+        <h3>接受 / 拒绝</h3>
+        <ul>
+          <li>随机路径：<code>acceptance_prob = target_p / draft_p</code>，逐位与 uniform 比；拒绝则从 <code>recovered_probs = max(0, target_p - draft_p)</code> 归一重采。greedy 直接比 argmax。</li>
+          <li><strong>bonus token</strong> = target 对最后一个 validate position 的采样，无条件附在接受串末。</li>
+          <li>accepted tokens + embeddings 写回 <code>EmbeddingCache</code>，供下一 step draft 用。KV slot 级回滚由 scheduler 按实际 accepted 数处理，worker 代码无显式 rollback。</li>
+        </ul>
+      </section>
+
+      <section id="streams">
+        <h2>7. 流（stream）模型小结</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>流</th><th>职责</th></tr></thead>
+            <tbody>
+              <tr><td><code>prepare_stream_</code></td><td>H2D + 所有 device 侧 prepare。</td></tr>
+              <tr><td>forward / compute stream</td><td>model forward。靠 <code>prepare_stream.record_event()</code> + forward 流 <code>wait_event</code> 跨流衔接。</td></tr>
+              <tr><td><code>capture_stream_</code></td><td>ACL Graph capture 时切到的 high-priority 流。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          step 开头 <code>wait_input_ready_events</code> 等 input 的 metadata_ready_event。开启 graph 时 prepare 全程持 <code>DeviceCaptureLock</code>，防 capture 被异步 H2D 打断。
+        </p>
+        <div class="callout">
+          <strong>每阶段产物回顾：</strong>
+          prepare(host)：Batch → ForwardInput(CPU)；
+          prepare(device)：ForwardInput(CPU) → ForwardInput(NPU) + ready event；
+          forward：tokens/positions/kv/params → hidden_states；
+          logits：hidden + selected idx → logits；
+          sample：logits + params → SampleOutput。
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

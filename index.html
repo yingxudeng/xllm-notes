@@ -181,6 +181,39 @@
     <h2>知识沉淀 <span class="count">notes/</span></h2>
     <p class="section-note">跨 PR 的原理、踩坑与方法论,会随认识加深持续更新。</p>
     <div class="cards">
+      <a class="card" href="notes/xllm-execution-pipeline/">
+        <div class="card-title">xLLM NPU 推理执行主干</div>
+        <p class="card-desc">
+          一次 forward 从调度到采样穿过的四段流水线:step → prepare → forward → sample,外加 MTP 投机分支与 ACL Graph 的 capture/replay。
+        </p>
+        <div class="card-meta">
+          <span class="badge">Note</span>
+          <span class="badge">Runtime</span>
+          <span class="badge date">2026-07-08</span>
+        </div>
+      </a>
+      <a class="card" href="notes/kv-cache-block-management/">
+        <div class="card-title">KV Cache Block 管理架构</div>
+        <p class="card-desc">
+          从 BlockManagerPool 到 Block 句柄的分层地图:谁分配物理 block、谁只是引用计数句柄、prefix cache / composite / hierarchy / linear-state slot 各自的职责。
+        </p>
+        <div class="card-meta">
+          <span class="badge">Note</span>
+          <span class="badge">Memory</span>
+          <span class="badge date">2026-07-08</span>
+        </div>
+      </a>
+      <a class="card" href="notes/linear-state-prefix-cache-internals/">
+        <div class="card-title">Linear-State Prefix Cache 内部机制</div>
+        <p class="card-desc">
+          GDN recurrent state 无法零拷贝共享:save 走 scheduler 零拷贝换手(promotion),restore 走 worker 侧真拷贝,加上四字段 scheduler↔worker 契约的字段必要性论证。
+        </p>
+        <div class="card-meta">
+          <span class="badge">Note</span>
+          <span class="badge">Linear State</span>
+          <span class="badge date">2026-07-08</span>
+        </div>
+      </a>
       <!-- 新增 note 时复制一张 card:
       <a class="card" href="notes/<主题>/">
         <div class="card-title">标题</div>

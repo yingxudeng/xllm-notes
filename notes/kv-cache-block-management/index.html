@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xLLM KV Cache Block 管理架构 · xLLM Notes</title>
+  <style>
+    :root {
+      --bg: #eceff4;
+      --surface: #ffffff;
+      --surface-alt: #f3f5f9;
+      --ink: #1b2130;
+      --muted: #5a6478;
+      --line: #d6dbe6;
+      --indigo: #3b4bd8;
+      --indigo-deep: #232a52;
+      --terra: #c1583b;
+      --terra-soft: #f6e5df;
+      --code-bg: #f5f6f8;
+      --code-ink: #24304a;
+      --code-line: #dde2ec;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--indigo); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1, h2, h3, .brand {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      letter-spacing: 0.01em;
+    }
+
+    .topbar {
+      position: sticky; top: 0; z-index: 20;
+      background: var(--indigo-deep); border-bottom: 3px solid var(--terra);
+    }
+    .topbar-inner {
+      max-width: 1120px; margin: 0 auto; padding: 14px 24px;
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    .brand { color: #fff; font-size: 17px; font-weight: 700; }
+    .brand a { color: #fff; }
+    .topbar .crumb { color: #aeb6d4; font-size: 13px; }
+    .topbar .crumb a { color: #aeb6d4; }
+
+    .page { max-width: 1120px; margin: 0 auto; padding: 0 24px 80px; }
+
+    header { padding: 44px 0 30px; border-bottom: 2px solid var(--indigo-deep); }
+    .eyebrow {
+      display: inline-block; color: var(--terra); font-size: 12px;
+      font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    h1 { margin: 12px 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+    .subtitle { max-width: 900px; margin: 0; color: var(--muted); font-size: 18px; }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      display: inline-flex; align-items: center; min-height: 28px;
+      padding: 3px 11px; border: 1px solid var(--line); border-radius: 2px;
+      background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 600;
+    }
+    .tag.accent { color: var(--terra); border-color: #e6c9a8; background: var(--terra-soft); }
+
+    nav.toc {
+      position: sticky; top: 55px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 22px 0 30px; padding: 12px 14px;
+      background: rgba(236, 239, 244, 0.92); backdrop-filter: blur(6px);
+      border: 1px solid var(--line); border-radius: 3px;
+    }
+    nav.toc a {
+      padding: 4px 11px; border-radius: 2px; color: var(--muted);
+      font-size: 13.5px; font-weight: 600;
+    }
+    nav.toc a:hover { background: var(--indigo); color: #fff; text-decoration: none; }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative; margin-bottom: 22px; padding: 30px 30px 30px 34px;
+      border: 1px solid var(--line); border-left: 4px solid var(--indigo);
+      border-radius: 3px; background: var(--surface);
+    }
+
+    h2 { margin: 0 0 16px; font-size: 25px; line-height: 1.28; color: var(--indigo-deep); }
+    h3 { margin: 24px 0 10px; font-size: 18px; line-height: 1.35; color: var(--terra); }
+    p { margin: 10px 0; }
+    ul, ol { padding-left: 22px; margin: 10px 0; }
+    li { margin: 6px 0; }
+
+    .callout {
+      margin: 18px 0; padding: 15px 18px; border: 1px solid #c2c8f0;
+      border-left: 4px solid var(--indigo); border-radius: 2px; background: #eef0fd;
+    }
+    .warning { border-color: #e6c9a8; border-left-color: var(--terra); background: var(--terra-soft); }
+
+    .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 3px; }
+    table { width: 100%; border-collapse: collapse; min-width: 640px; background: var(--surface); }
+    th, td {
+      padding: 12px 14px; border-bottom: 1px solid var(--line);
+      vertical-align: top; text-align: left; font-size: 14px;
+    }
+    th { background: var(--indigo-deep); color: #fff; font-weight: 700; border-bottom: none; }
+    tbody tr:nth-child(even) { background: var(--surface-alt); }
+    tr:last-child td { border-bottom: 0; }
+
+    code {
+      padding: 2px 6px; border-radius: 2px; background: #e8ebf3; color: var(--indigo-deep);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.9em;
+    }
+    pre {
+      overflow-x: auto; margin: 16px 0; padding: 18px;
+      border: 1px solid var(--code-line); border-left: 3px solid var(--terra);
+      border-radius: 3px; background: var(--code-bg); color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12.5px; line-height: 1.55;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+    pre.ascii { line-height: 1.35; }
+
+    @media (max-width: 920px) {
+      nav.toc { position: static; }
+    }
+    @media print {
+      body { background: #fff; }
+      .topbar, nav.toc { display: none; }
+      .page { max-width: none; padding: 0; }
+      section { break-inside: avoid; border-left-width: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand"><a href="../../">xLLM Notes</a></span>
+      <span class="crumb">/ notes / kv-cache-block-management</span>
+    </div>
+  </div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Knowledge · Memory Management</div>
+      <h1>KV Cache Block 管理架构</h1>
+      <p class="subtitle">
+        谁是入口、谁真正分配物理 block、谁只是资源句柄、谁负责缓存 / 分层 / 特殊模式。一张从 <code>BlockManagerPool</code> 到 <code>Block</code> 的分层地图，含 prefix cache、composite、hierarchy 与 linear-state slot。
+      </p>
+      <div class="meta">
+        <span class="tag accent">Note</span>
+        <span class="tag">Block Manager</span>
+        <span class="tag">Prefix Cache</span>
+        <span class="tag">内存管理</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#overview">总览</a>
+      <a href="#interfaces">两层接口</a>
+      <a href="#block">Block 句柄</a>
+      <a href="#impl">BlockManagerImpl</a>
+      <a href="#pool">Pool 构造与分配</a>
+      <a href="#single">SingleBlockManager</a>
+      <a href="#linear">LinearStatePrefixCache</a>
+      <a href="#dealloc">deallocate</a>
+      <a href="#variants">其它变体</a>
+      <a href="#summary">职责总表</a>
+    </nav>
+
+    <main>
+      <section id="overview">
+        <h2>1. 总览</h2>
+        <p>
+          <code>BlockManagerPool</code> 是<strong>调度侧的 KV cache 总管</strong>。它自己不是最底层的物理 block 分配器，而是：
+        </p>
+        <ul>
+          <li>对外实现 <code>KVCacheManager</code> 接口；</li>
+          <li>对内按 <code>dp_rank</code> 持有多个 <code>BlockManager</code>；</li>
+          <li>根据配置选择普通 / 并发 / 复合 / XTensor allocator；</li>
+          <li>同时管理 sequence 级别的 <code>single_block</code>；</li>
+          <li>启用 linear-state 时，管理 <code>LinearStatePrefixCache</code>；</li>
+          <li>作为 <code>HierarchyBlockManagerPool</code> 时，在 device KV cache 外再管理一套 host KV cache。</li>
+        </ul>
+        <pre class="ascii"><code>                Scheduler / Request / Sequence
+                          │  sequence 级 KV cache API
+                          ▼
+                 ┌───────────────────────┐
+                 │   KVCacheManager       │  抽象接口
+                 └───────────────────────┘
+                          ▲
+        ┌─────────────────────────────────────────┐
+        │          BlockManagerPool               │
+        │  - block_managers_[dp_rank]             │
+        │  - single_block_managers_[dp_rank]      │
+        │  - linear_state_prefix_caches_[dp_rank] │
+        └─────────────────────────────────────────┘
+             │             │                │
+             ▼             ▼                ▼
+   ┌────────────────┐ ┌────────────────┐ ┌────────────────────────┐
+   │ BlockManager   │ │ SingleBlockMgr │ │ LinearStatePrefixCache │
+   │ 抽象接口        │ │ 单 id/slot 池   │ │ linear-state checkpoint│
+   └────────────────┘ └────────────────┘ └────────────────────────┘
+             ▲
+   ┌──────────────┬──────────────────┬──────────────────────┐
+   │ BlockManager │ ConcurrentBlock  │ CompositeBlockManager │
+   │ Impl 普通    │ ManagerImpl 加锁 │ 组合多个子 manager     │
+   └──────────────┴──────────────────┴──────────────────────┘
+        │                                     │
+        ▼                                     ▼
+   ┌─────────────┐                 ┌───────────────────────┐
+   │ PrefixCache │                 │ BlockManagerImpl /    │
+   │ 前缀缓存     │                 │ SlidingWindowBlockMgr │
+   └─────────────┘                 └───────────────────────┘
+
+另有：HierarchyBlockManagerPool 继承 BlockManagerPool，
+      增加 host_block_managers_，做 H2D / D2G transfer。</code></pre>
+      </section>
+
+      <section id="interfaces">
+        <h2>2. 两层接口：KVCacheManager vs BlockManager</h2>
+        <p>这俩名字很像，但层级不同。</p>
+
+        <h3>2.1 KVCacheManager：面向 Sequence / Scheduler</h3>
+        <p>接口粒度是"一个请求、一个 sequence"：</p>
+        <pre><code>allocate(Sequence* sequence)
+deallocate(Sequence* sequence)
+allocate_shared(Sequence* sequence)
+cache(Sequence* sequence)</code></pre>
+        <p>它关心的是：一个 sequence 需要多少 KV cache？能不能复用 prefix cache？结束后怎么回收？<code>BlockManagerPool</code> 就是它的主要实现类。</p>
+
+        <h3>2.2 BlockManager：面向物理 block 分配</h3>
+        <p>接口粒度是"给我 N 个 block id"：</p>
+        <pre><code>allocate(num_blocks)
+deallocate(blocks)
+allocate_shared(token_ids)
+cache(token_ids, blocks)
+free(block_id)</code></pre>
+        <p>它关心的是：分出 N 个 block id；哪几个可以逻辑释放；prefix cache 命中了哪些；最后一个引用没了时把 id 放回 free list。</p>
+        <div class="callout">
+          <strong>关系一句话：</strong><code>BlockManagerPool</code> <em>是一个</em> <code>KVCacheManager</code>，<em>内部持有多个</em> <code>BlockManager</code>。
+        </div>
+      </section>
+
+      <section id="block">
+        <h2>3. Block：最底层资源句柄，不是 allocator</h2>
+        <p><code>Block</code> 表示一个物理 KV block 的句柄，里面有 <code>id_</code> / <code>size_</code> / <code>ref_count_</code> / <code>manager_</code> / <code>hash_value_</code>。关键点：它持有一个<strong>非 owning</strong> 的 <code>BlockManager* manager_</code>，最后一个引用消失时调用 <code>manager_-&gt;free(id_)</code>。</p>
+
+        <h3>3.1 deallocate() 和 free() 不是一回事</h3>
+        <pre class="ascii"><code>deallocate(blocks)
+  = sequence 逻辑上不用这些 block 了
+  = 更新 used 统计
+  = 但 block id 不一定马上回到 free list
+
+Block 析构 / 最后一个引用消失
+  = ref_count 归零
+  = 调 manager->free(id)
+  = 物理 id 真正回到 free list</code></pre>
+        <p>为什么要这样？因为 <strong>prefix cache 可能也持有同一个 Block</strong>：</p>
+        <pre class="ascii"><code>Sequence.blocks_  ────┐
+                      ▼
+                   Block(id=10, ref_count=2)
+                      ▲
+PrefixCache entry ────┘</code></pre>
+        <p>sequence 结束后，它这边释放了，但 prefix cache 还拿着 block，物理 id 不能回收。只有 prefix cache 也 evict 之后 ref_count 归零，才真正 <code>free(id)</code>。</p>
+      </section>
+
+      <section id="impl">
+        <h2>4. BlockManagerImpl：普通 allocator + PrefixCache</h2>
+        <p>普通模式下真正分配 KV block 的类。内部主要有 <code>prefix_cache_</code> / <code>padding_block_</code> / <code>free_blocks_</code> / <code>num_free_blocks_</code> / <code>num_used_blocks_</code>。</p>
+
+        <h3>4.1 初始化</h3>
+        <p>构造时：① 若启用 prefix cache，创建 <code>PrefixCache</code>；② 初始化 <code>free_blocks_</code>；③ 预留 block id 0 作为 padding block。</p>
+        <pre class="ascii"><code>physical block ids:
+  0        -> padding block，保留
+  1..N-1   -> 可分配给 sequence</code></pre>
+
+        <h3>4.2 分配、命中、插入</h3>
+        <pre class="ascii"><code>allocate(num_blocks)
+  -> has_enough_blocks()  free 不够则尝试 prefix_cache_->evict()
+  -> 从 free_blocks_ 弹出 block id
+  -> 构造 Block(block_id, this)
+
+allocate_shared(token_ids)
+  -> prefix_cache_->match(...)  -> 返回一组共享 Block
+
+cache(token_ids, blocks)
+  -> prefix_cache_->insert(...)</code></pre>
+
+        <h3>4.3 eviction 与 ref_count 的关系</h3>
+        <pre class="ascii"><code>allocate() -> has_enough_blocks() -> prefix_cache_->evict(n)
+     -> 删除 prefix cache 里的 Block handle
+     -> Block 析构 -> ref_count--
+     -> 若 ref_count==0，则 manager->free(id)</code></pre>
+        <p>所以 prefix cache eviction 不直接操作 free list，而是通过 <code>Block</code> 的析构链路把 id 还给 allocator。</p>
+      </section>
+
+      <section id="pool">
+        <h2>5. Pool 构造与分配流程</h2>
+
+        <h3>5.1 构造时怎么选具体 manager</h3>
+        <p>每个 <code>dp_rank</code> 创建一个具体 <code>BlockManager</code>：</p>
+        <pre class="ascii"><code>for each dp_rank:
+  if enable_xtensor:            XTensorBlockManagerImpl
+  else if manager_types 非空:   CompositeBlockManager
+  else if disagg_pd 或 kvcache_store: ConcurrentBlockManagerImpl
+  else:                         BlockManagerImpl
+  同时创建一个 SingleBlockManager
+  若 enable_linear_state:       创建一个 LinearStatePrefixCache</code></pre>
+
+        <h3>5.2 普通 allocate 主流程</h3>
+        <pre class="ascii"><code>allocate(sequence)
+    │
+    ├─ get_dp_rank(sequence)
+    │
+    ├─ allocate_single_block()
+    │     ├─ single_block_managers_[dp]->allocate(1)
+    │     └─ if linear_state: acquire_live_slot()
+    │
+    ├─ is_composite?
+    │     └─ yes: CompositeBlockManager::allocate_for_sequence()
+    │
+    ├─ started_empty?
+    │     └─ yes: allocate_shared() -> PrefixCache::match()
+    │
+    ├─ calculate needed blocks
+    └─ BlockManagerImpl::allocate(additional) -> Sequence::add_kv_blocks()</code></pre>
+
+        <h3>5.3 get_dp_rank：sequence 分到哪个 dp manager</h3>
+        <pre class="ascii"><code>若 sequence 已有 dp_rank:  用已有
+否则:                     找 free blocks 最多的 manager，set_dp_rank</code></pre>
+        <p>注意：linear-state 开启时，选择会<strong>跳过 single-block 已无空闲的 dp</strong>——dp 选择不只看 KV block，还要考虑 sequence 级 slot 是否够用。</p>
+      </section>
+
+      <section id="single">
+        <h2>6. SingleBlockManager：sequence 级单 id 资源</h2>
+        <p>它也继承 <code>BlockManager</code>，但用途不同：</p>
+        <pre class="ascii"><code>普通 KV block:  一个 Block 表示一块 KV cache，size = block_size
+single block:  一个 Block 表示一个单独的 id/slot，block_size = 1</code></pre>
+        <p>它自己<strong>没有 prefix cache</strong>（<code>allocate_shared()</code> 返回空、<code>cache()</code> no-op），也保留 id 0。sequence 里的三种资源来源：</p>
+        <pre class="ascii"><code>Sequence
+  ├─ kv_state().blocks_    -> 由 block_managers_[dp] 分配
+  ├─ single_block_         -> 由 single_block_managers_[dp] 分配
+  └─ linear_state_slot_    -> 由 linear_state_prefix_caches_[dp] 内部 slots_ 分配</code></pre>
+      </section>
+
+      <section id="linear">
+        <h2>7. LinearStatePrefixCache：GDN recurrent state 缓存</h2>
+        <p>
+          Qwen3.5 / Qwen3.6 这类 GDN linear-state 模型的 scheduler 侧缓存。它管理的不是 KV block，而是 recurrent state slot。内部持有一个 <code>SingleBlockManager slots_</code>、一张 <code>hash → CacheEntry</code> 表和 LRU。
+        </p>
+        <h3>7.1 三种 slot 状态</h3>
+        <pre class="ascii"><code>0:                  padding slot，不分配
+live slot:          当前运行 sequence 持有（sequence->linear_state_slot_）
+pending checkpoint: 已 reserve，worker 稍后 copy 进去，暂不能 match
+committed checkpoint: 已进入缓存表，可被 prefix hash 命中，通过 LRU evict</code></pre>
+        <div class="callout">
+          <strong>与已发布报告呼应：</strong>save / restore / 数据契约的完整机制，见配套 note
+          <a href="../linear-state-prefix-cache-internals/">Linear-State Prefix Cache 内部机制</a>
+          及设计报告 <a href="../../reports/qwen35-linear-prefix-cache-pr1839/">Qwen3.5 Linear-State Prefix Cache（PR #1839）</a>。
+        </div>
+
+        <h3>7.2 为什么 linear-state 会影响 KV prefix cache</h3>
+        <p>
+          KV prefix cache 命中了多少 block，不代表 linear-state 一定能恢复到对应边界。对 linear-state 模型，复用 KV block 的同时还必须能恢复 recurrent state，所以只能复用那些"对应 prefix hash 有 linear-state checkpoint"的 block 边界。
+        </p>
+        <pre class="ascii"><code>prompt blocks:   block0   block1   block2   block3
+                  hash0    hash1    hash2    hash3
+
+KV PrefixCache 命中:            block0..block3
+LinearStatePrefixCache 有 checkpoint: hash0, hash1,       hash3
+                                            ▲ 最长连续安全边界到 block1
+
+结果: 只复用 block0, block1；block2, block3 要 trim 掉</code></pre>
+        <p>逻辑是遍历 shared block 边界，累加"prefix hash 在 linear-state cache 里 contains"的连续前缀，把安全边界之后的 shared block deallocate 掉。</p>
+      </section>
+
+      <section id="dealloc">
+        <h2>8. deallocate 流程</h2>
+        <pre class="ascii"><code>deallocate(sequence)
+    │
+    ├─ cache(sequence)               -> PrefixCache::insert()
+    ├─ block_managers_[dp]->deallocate(kv_blocks)
+    ├─ deallocate_single_block()     -> release_linear_state_slot() + single mgr deallocate
+    └─ sequence->reset()
+          -> Block handles 被释放 -> ref_count--
+             ├─ prefix cache 还持有: 物理 block 不回收
+             └─ ref_count==0: Block::~Block() -> manager->free(id)</code></pre>
+        <div class="callout warning">
+          <strong>顺序不能乱：</strong>先 cache，再 deallocate，再 reset sequence。因为 prefix cache 插入需要 sequence 里的 token 和 block，不能先 reset。
+        </div>
+      </section>
+
+      <section id="variants">
+        <h2>9. 其它变体</h2>
+
+        <h3>9.1 ConcurrentBlockManagerImpl：加锁版</h3>
+        <p>继承 <code>BlockManagerImpl</code>，每个接口加 <code>recursive_mutex</code>，用于 disagg PD / kvcache store。用 recursive mutex 的原因：prefix cache eviction 可能在 allocator API 持锁期间释放 <code>Block</code>，而释放会回调 <code>free()</code>，需允许同线程重入。</p>
+
+        <h3>9.2 CompositeBlockManager：一个 manager 包多个子 manager</h3>
+        <p>按 <code>manager_types</code> 创建不同子 manager（如 <code>BlockManagerImpl</code> 或 <code>SlidingWindowBlockManager</code>）。与普通路径最大区别在 sequence 的 block 存储结构：</p>
+        <pre class="ascii"><code>普通:      Sequence.kv_state().blocks_            一维 vector&lt;Block&gt;
+Composite: Sequence.kv_state().composite_blocks_  二维 vector&lt;vector&lt;Block&gt;&gt;
+                                                   每个 sub-manager 一组</code></pre>
+        <p>Composite 当前<strong>不支持 prefix cache</strong>：allocate 直接走 <code>allocate_for_sequence()</code>、deallocate 走 <code>deallocate_sequence()</code>、cache 跳过。</p>
+
+        <h3>9.3 SlidingWindowBlockManager：Composite 的子 manager</h3>
+        <p>继承 <code>BlockManagerImpl</code>，自己分配就是复用父类。真正的 sliding-window 行为（释放超出窗口的旧 SWA blocks）在 <code>CompositeBlockManager::allocate_for_sequence()</code> 里处理。</p>
+
+        <h3>9.4 HierarchyBlockManagerPool：device 外再加 host KV cache</h3>
+        <p>继承 <code>BlockManagerPool</code>，新增 <code>host_block_managers_</code> / <code>load_block_transfer_infos_</code>（H2D copy plan）/ <code>offload_block_pair_queues_</code>（D2G copy plan）。allocate 先调基础版再安排 H2D transfer；deallocate 时先把 device blocks cache 到 prefix cache，再根据 host/device 情况安排 offload。</p>
+
+        <h3>9.5 BlockTable 在这里对应什么</h3>
+        <p>这一层没有独立的 <code>BlockTable</code> 类。最接近的是 <code>Sequence::kv_state().blocks_</code>（<code>vector&lt;Block&gt;</code>），表示 logical block index 到 physical block id 的映射。下游 kernel 需要 slot id 时按下式转换：</p>
+        <pre class="ascii"><code>token position i
+  -> block index  = i / block_size
+  -> block offset = i % block_size
+  -> physical id  = blocks_[block index].id()
+  -> slot id      = physical_id * block_size + block_offset</code></pre>
+      </section>
+
+      <section id="summary">
+        <h2>10. 职责总表</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>类</th><th>层级</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><code>Block</code></td><td>最底层句柄</td><td>持有 id / ref_count / manager 指针；最后一个引用消失时回调 <code>manager-&gt;free(id)</code></td></tr>
+              <tr><td><code>BlockManager</code></td><td>allocator 抽象接口</td><td>定义 allocate/deallocate/cache/free 等物理 block 操作</td></tr>
+              <tr><td><code>BlockManagerImpl</code></td><td>普通 allocator</td><td>free list + prefix cache + padding block</td></tr>
+              <tr><td><code>ConcurrentBlockManagerImpl</code></td><td>并发 allocator</td><td><code>BlockManagerImpl</code> 加锁版，用于 disagg / kvcache store</td></tr>
+              <tr><td><code>SingleBlockManager</code></td><td>单 slot allocator</td><td>管 sequence single block 或 linear-state slot，id 0 保留，无 prefix cache</td></tr>
+              <tr><td><code>LinearStatePrefixCache</code></td><td>linear-state cache</td><td>管 GDN recurrent state live slot / checkpoint / LRU</td></tr>
+              <tr><td><code>CompositeBlockManager</code></td><td>复合 allocator</td><td>一个 manager 包多个子 manager，用 <code>composite_blocks_</code></td></tr>
+              <tr><td><code>SlidingWindowBlockManager</code></td><td>composite 子类</td><td>SWA 子 manager，实际分配复用 <code>BlockManagerImpl</code></td></tr>
+              <tr><td><code>BlockManagerPool</code></td><td>scheduler 入口</td><td>实现 <code>KVCacheManager</code>，按 sequence 编排分配 / 共享 / 缓存 / 回收</td></tr>
+              <tr><td><code>HierarchyBlockManagerPool</code></td><td>分层 pool</td><td>继承 <code>BlockManagerPool</code>，增加 host block managers 与 H2D/D2G transfer</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>10.1 一张最关键的生命周期图</h3>
+        <pre class="ascii"><code>请求进入 -> Sequence 创建
+  -> BlockManagerPool::allocate(sequence)
+       ├─ 选 dp_rank
+       ├─ 分配 single_block_
+       ├─ 若 linear_state: 分配 linear_state_slot_
+       ├─ 若 prefix cache: allocate_shared() -> PrefixCache::match()
+       └─ 分配缺少的 KV blocks
+  -> worker 使用 block table / slot ids 做推理
+  -> Sequence 结束
+  -> BlockManagerPool::deallocate(sequence)
+       ├─ cache(sequence) -> PrefixCache::insert()
+       ├─ deallocate() -> used 统计下降
+       ├─ deallocate_single_block()
+       └─ sequence->reset() -> Block handles 释放 -> ref_count--
+            ├─ prefix cache 还持有: 物理 block 不回收
+            └─ ref_count==0: Block::~Block() -> manager->free(id) -> id 回 free list</code></pre>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
