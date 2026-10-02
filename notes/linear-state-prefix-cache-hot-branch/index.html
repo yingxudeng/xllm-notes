@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Linear-State 非 Chunk 热分支与尾块缓存 · xLLM Notes</title>
+  <style>
+    :root { --bg:#eceff4; --surface:#fff; --ink:#1b2130; --muted:#5a6478; --line:#d6dbe6; --indigo:#3b4bd8; --deep:#232a52; --terra:#c1583b; --soft:#eef0fd; --warn:#f6e5df; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif; line-height:1.72; }
+    a { color:var(--indigo); text-decoration:none; } a:hover { text-decoration:underline; }
+    h1,h2,h3,.brand { font-family:Georgia,"Times New Roman","Songti SC",serif; }
+    .topbar { position:sticky; top:0; z-index:2; background:var(--deep); border-bottom:3px solid var(--terra); }
+    .topbar-inner,.page { max-width:1120px; margin:0 auto; }
+    .topbar-inner { padding:14px 24px; display:flex; gap:14px; align-items:baseline; }
+    .brand,.brand a { color:#fff; font-weight:700; } .brand { font-size:17px; }
+    .crumb { color:#aeb6d4; font-size:13px; }
+    .page { padding:0 24px 80px; }
+    header { padding:44px 0 30px; border-bottom:2px solid var(--deep); }
+    .eyebrow { color:var(--terra); font-size:12px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:12px 0 14px; font-size:clamp(30px,4vw,46px); line-height:1.12; }
+    .subtitle { max-width:900px; margin:0; color:var(--muted); font-size:18px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:24px; }
+    .tag { padding:3px 11px; border:1px solid var(--line); border-radius:2px; background:var(--surface); color:var(--muted); font-size:13px; font-weight:600; }
+    .tag.accent { color:var(--terra); border-color:#e6c9a8; background:var(--warn); }
+    nav { display:flex; flex-wrap:wrap; gap:6px; margin:22px 0 30px; padding:12px 14px; border:1px solid var(--line); background:rgba(236,239,244,.92); }
+    nav a { padding:4px 11px; color:var(--muted); font-size:13.5px; font-weight:600; }
+    section { margin-bottom:22px; padding:30px 30px 30px 34px; border:1px solid var(--line); border-left:4px solid var(--indigo); background:var(--surface); }
+    h2 { margin:0 0 16px; color:var(--deep); font-size:25px; line-height:1.28; } h3 { margin:24px 0 10px; color:var(--terra); font-size:18px; }
+    p { margin:10px 0; } li { margin:6px 0; }
+    .callout { margin:18px 0; padding:15px 18px; border:1px solid #c2c8f0; border-left:4px solid var(--indigo); background:var(--soft); }
+    .warning { border-color:#e6c9a8; border-left-color:var(--terra); background:var(--warn); }
+    .table-wrap { overflow-x:auto; margin:16px 0; border:1px solid var(--line); }
+    table { width:100%; min-width:700px; border-collapse:collapse; background:var(--surface); } th,td { padding:11px 13px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:14px; } th { background:var(--deep); color:#fff; } tr:nth-child(even) td { background:#f3f5f9; }
+    code { padding:2px 6px; border-radius:2px; background:#e8ebf3; color:var(--deep); font-family:Consolas,Menlo,monospace; font-size:.9em; }
+    pre { overflow-x:auto; padding:16px; border:1px solid var(--line); border-left:3px solid var(--terra); background:#f5f6f8; color:#24304a; font:12.5px/1.55 Consolas,Menlo,monospace; }
+    pre code { padding:0; background:transparent; }
+    @media print { body { background:#fff; } .topbar,nav { display:none; } .page { max-width:none; padding:0; } section { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+  <div class="topbar"><div class="topbar-inner"><span class="brand"><a href="../../">xLLM Notes</a></span><span class="crumb">/ notes / linear-state-prefix-cache-hot-branch</span></div></div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Design · E2E Evidence</div>
+      <h1>Linear-State 非 Chunk 热分支与尾块缓存</h1>
+      <p class="subtitle">设计目标是同时保留高频但非 chunk 对齐的前缀，以及请求末尾最后一个完整 KV block。本文记录当前实现、hash 边界、容量语义和 2026-10-02 在 CANN9 容器中的复测结果。</p>
+      <div class="meta"><span class="tag accent">Accepted</span><span class="tag">GLM-5.3-Flash</span><span class="tag">Prefix Cache</span><span class="tag">Commit 29b510a8e</span></div>
+    </header>
+    <nav aria-label="目录"><a href="#goal">目标</a><a href="#design">设计</a><a href="#hash">Hash 边界</a><a href="#semantics">命中语义</a><a href="#e2e">端到端证据</a><a href="#risks">限制</a></nav>
+    <main>
+      <section id="goal">
+        <h2>1. 目标与约束</h2>
+        <p>KV block size 是 <code>128</code>，chunk size 本轮是 <code>8192</code>。线性状态只能从可恢复的 KV block 边界挂载；因此长度 <code>chunk*n+r</code> 中，只有 <code>floor((chunk*n+r)/128)*128</code> 之前的完整部分可以作为 checkpoint。</p>
+        <div class="callout warning"><strong>不承诺保存半个 KV block。</strong>例如余数小于 128 时回退到前一个完整 block，剩余 token 仍正常计算。要支持任意 token 的恢复，需要拆开 KV 游标和 linear-state 游标，当前范围不包括这项大改。</div>
+      </section>
+      <section id="design">
+        <h2>2. 当前设计</h2>
+        <ol>
+          <li><strong>完成请求后观察：</strong>只对完整 prompt 建立观察记录。记录键是链式 KV block hash，值包含该位置的 token 数和本次后继 token。</li>
+          <li><strong>热点分支准入：</strong>扫描每个 KV block 对齐的位置；位置不是 chunk 边界且同一个 hash 观察到不同后继 token 时，认定为热点分支。当前请求把这个位置加入 pending checkpoint。</li>
+          <li><strong>尾部保存：</strong>请求结束时仍保存最后一个完整 KV block 对齐的尾部状态。pending checkpoint 按 token 数排序、去重、按顺序完成，所以同一请求可以同时保存内部热点分支和尾部。</li>
+          <li><strong>容量保护：</strong>观察表有上限，线性 state slot 仍由现有 LRU/占用规则回收。热点发现不改变普通 KV cache 的 ownership 规则。</li>
+        </ol>
+        <p>实现位置：<a href="../../../../projects/xllm-feat-glm-5.3-flash/xllm/core/framework/block/linear_state_block_manager.cpp">linear_state_block_manager.cpp</a> 负责观察和候选扫描；<a href="../../../../projects/xllm-feat-glm-5.3-flash/xllm/core/framework/block/composite_block_manager.cpp">composite_block_manager.cpp</a> 负责 probe、trim 和多 checkpoint 提交；<a href="../../../../projects/xllm-feat-glm-5.3-flash/xllm/core/framework/request/sequence.h">sequence.h</a> 保存有序 pending 队列。</p>
+      </section>
+      <section id="hash">
+        <h2>3. Hash 必须使用 block size 域</h2>
+        <p>D 节点（以及后续 Mooncake/KV store 传输）使用的前缀 key 必须对应真实 KV block 边界。当前 hash 链按 <code>block_size=128</code> 推进，chunk size 只决定线性状态的分段/调度，不改变 KV hash 的粒度。</p>
+        <div class="table-wrap"><table><thead><tr><th>对象</th><th>粒度</th><th>原因</th></tr></thead><tbody><tr><td>KV block hash / D 节点 key</td><td>128 tokens</td><td>与 KV ownership、Mooncake block 传输一致</td></tr><tr><td>linear-state checkpoint</td><td>128 的整数倍</td><td>保证 KV 和 recurrent state 可共同恢复</td></tr><tr><td>chunked prefill</td><td>8192（本轮）</td><td>决定普通分段，不应改变 hash domain</td></tr><tr><td>小于 128 的尾巴</td><td>不单独建 key</td><td>只能从前一完整 block 恢复，余数重新计算</td></tr></tbody></table></div>
+        <p>因此不要把 D 节点 hash 改成 chunk size。正确做法是保持 block-size hash，并让线性状态额外记录非 chunk 的 block-aligned checkpoint。</p>
+      </section>
+      <section id="semantics">
+        <h2>4. “先观察、后命中”的语义</h2>
+        <p>第一次看到某个前缀及其后继 token 时只建立观察，不会凭一次样本把状态写成热点分支。第二个不同后继 token 到来时确认该位置是热点，并提交该 checkpoint。因此三请求序列的预期是：</p>
+        <pre><code>A: cached=0       # 冷请求，建立观察
+B: cached=0/或继续计算 # 触发热点准入，本次不依赖刚提交的状态
+C: cached=4096    # 后续请求命中非 chunk 分支
+Tail-E: cached=16256   # 16383 token 请求的最后完整 KV block</code></pre>
+        <p>API 的 <code>cached_tokens</code> 主要反映 KV 可见命中；linear-state tail 的恢复还要结合服务内部状态。因此验证同时看 API 计数、输出是否正常和重复请求是否稳定。</p>
+      </section>
+      <section id="e2e">
+        <h2>5. 2026-10-02 CANN9 端到端复测</h2>
+        <p>容器：<code>dyx-xllm-cann9-20260911</code>；完整 45 层模型；8 卡 TP；<code>enable_prefix_cache=true</code>；<code>enable_chunked_prefill=true</code>；<code>max_tokens_per_chunk_for_prefill=8192</code>；显式设置了 ASCEND_CUSTOM_OPP_PATH。</p>
+        <div class="table-wrap"><table><thead><tr><th>场景</th><th>输入</th><th>顺序</th><th>结果</th></tr></thead><tbody><tr><td>非 chunk 热分支</td><td>25701 tokens，候选点 4096</td><td>A → B → C</td><td>0 → 0 → <strong>4096</strong></td></tr><tr><td>前部 chunk 前缀</td><td>16383 = 8192 + 8191</td><td>front_a → front_b → front_c</td><td>0 → <strong>8192</strong> → <strong>8192</strong></td></tr><tr><td>尾部完整 block</td><td>同一组 16383 tokens</td><td>tail_d → tail_e</td><td>0 → <strong>16256</strong></td></tr><tr><td>重复持久性</td><td>同一已命中请求再次发送</td><td>branch_c / tail_e</td><td><strong>25600 / 16256</strong></td></tr></tbody></table></div>
+        <p>证据文件：</p>
+        <ul><li><a href="../../../../workspace/glm53_prefix_cache/e2e_repeat_20261002/alignment_16383_results.json">alignment_16383_results.json</a></li><li><a href="../../../../workspace/glm53_prefix_cache/e2e_repeat_20261002/branch_4096_results.json">branch_4096_results.json</a></li><li><a href="../../../../workspace/glm53_prefix_cache/e2e_repeat_20261002/repeat_hit_results.json">repeat_hit_results.json</a></li></ul>
+        <p>聚焦单测 <code>BlockManagerPoolTest.HotNonChunkBranchCheckpointAndTailAreSavedInOneRequest</code> 通过；<code>linear_state_prefix_cache_test</code> 15/15 通过。请求完成后服务已停止，8 张 NPU 均无运行进程。</p>
+      </section>
+      <section id="risks">
+        <h2>6. 限制与后续观察点</h2>
+        <ul><li>观察表是有界的，当前不是 LRU；达到上限时会淘汰任意观察项。它保护内存，但热点优先级不是严格的频率排序。</li><li>线性 state slot 仍可能因为容量回收而丢失早期 checkpoint；这表现为缓存未命中，不影响正确性。</li><li>本轮服务启动时有 HCCL watchdog 配置告警；请求和缓存验证期间无服务错误。主动终止进程后的 TBE 清理错误属于退出噪声，不能作为运行期成功证据。</li></ul>
+        <div class="callout"><strong>结论：</strong>保持 D 节点/Mooncake 的 block-size hash；通过额外的 block-aligned linear checkpoint 支持非 chunk 热分支；尾巴按最后完整 block 保存。当前实现和本轮真实服务结果符合这一设计。</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
