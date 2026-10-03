@@ -164,6 +164,17 @@
     <h2>设计报告 &amp; PR 评审 <span class="count">reports/</span></h2>
     <p class="section-note">围绕某个特性或 PR 的一次性快照:架构、工作流、接口、验证与风险。</p>
     <div class="cards">
+      <a class="card" href="reports/glm53-replayssm-ring-design/">
+        <div class="card-title">GLM5.3 ReplaySSM Ring Buffer 设计审查</div>
+        <p class="card-desc">
+          对比 SGLang KDA MTP、vLLM ReplaySSM 和 vLLM-Ascend NPU 适配，明确 xLLM 当前是 4 行窗口暂存，并规划 transactional ring 与 fused recurrent write。
+        </p>
+        <div class="card-meta">
+          <span class="badge pr">Design Review</span>
+          <span class="badge">GLM5.3 Flash</span>
+          <span class="badge date">2026-10-03</span>
+        </div>
+      </a>
       <a class="card" href="reports/qwen35-linear-prefix-cache-pr1839/">
         <div class="card-title">Qwen3.5 Linear-State Prefix Cache</div>
         <p class="card-desc">

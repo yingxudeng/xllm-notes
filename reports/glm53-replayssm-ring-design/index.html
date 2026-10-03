@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GLM5.3 ReplaySSM Ring Buffer 设计审查 · xLLM Notes</title>
+  <style>
+    :root { --bg:#eceff4; --surface:#fff; --alt:#f3f5f9; --ink:#1b2130; --muted:#5a6478; --line:#d6dbe6; --indigo:#3b4bd8; --deep:#232a52; --terra:#c1583b; --soft:#eef0fd; --warn:#f6e5df; --danger:#fbe9e7; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif; line-height:1.72; }
+    a { color:var(--indigo); text-decoration:none; } a:hover { text-decoration:underline; }
+    h1,h2,h3,.brand { font-family:Georgia,"Times New Roman","Songti SC","SimSun",serif; }
+    .topbar { position:sticky; top:0; z-index:20; background:var(--deep); border-bottom:3px solid var(--terra); }
+    .topbar-inner,.page { max-width:1180px; margin:0 auto; }
+    .topbar-inner { padding:14px 24px; display:flex; gap:14px; align-items:baseline; }
+    .brand,.brand a { color:#fff; font-weight:700; } .brand { font-size:17px; }
+    .crumb { color:#aeb6d4; font-size:13px; }
+    .page { padding:0 24px 80px; }
+    header { padding:44px 0 30px; border-bottom:2px solid var(--deep); }
+    .eyebrow { color:var(--terra); font-size:12px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { margin:12px 0 14px; font-size:clamp(30px,4vw,46px); line-height:1.12; }
+    .subtitle { max-width:1000px; margin:0; color:var(--muted); font-size:18px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:24px; }
+    .tag { display:inline-flex; padding:3px 11px; border:1px solid var(--line); border-radius:2px; background:var(--surface); color:var(--muted); font-size:13px; font-weight:600; }
+    .tag.accent { color:var(--terra); border-color:#e6c9a8; background:var(--warn); }
+    nav { position:sticky; top:55px; z-index:10; display:flex; flex-wrap:wrap; gap:6px; margin:22px 0 30px; padding:12px 14px; border:1px solid var(--line); background:rgba(236,239,244,.94); backdrop-filter:blur(6px); }
+    nav a { padding:4px 11px; color:var(--muted); font-size:13.5px; font-weight:600; }
+    nav a:hover { background:var(--indigo); color:#fff; text-decoration:none; }
+    section { margin-bottom:22px; padding:30px 30px 30px 34px; border:1px solid var(--line); border-left:4px solid var(--indigo); background:var(--surface); }
+    h2 { margin:0 0 16px; color:var(--deep); font-size:25px; line-height:1.28; }
+    h3 { margin:24px 0 10px; color:var(--terra); font-size:18px; line-height:1.35; }
+    p { margin:10px 0; } ul,ol { padding-left:24px; margin:10px 0; } li { margin:6px 0; }
+    .callout { margin:18px 0; padding:15px 18px; border:1px solid #c2c8f0; border-left:4px solid var(--indigo); background:var(--soft); }
+    .warning { border-color:#e6c9a8; border-left-color:var(--terra); background:var(--warn); }
+    .danger { border-color:#e6b3b3; border-left-color:#b3261e; background:var(--danger); }
+    .table-wrap { overflow-x:auto; margin:16px 0; border:1px solid var(--line); }
+    table { width:100%; min-width:820px; border-collapse:collapse; background:var(--surface); }
+    th,td { padding:11px 13px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:14px; }
+    th { background:var(--deep); color:#fff; } tbody tr:nth-child(even) td { background:var(--alt); } tr:last-child td { border-bottom:0; }
+    code { padding:2px 6px; border-radius:2px; background:#e8ebf3; color:var(--deep); font-family:Consolas,Menlo,monospace; font-size:.9em; }
+    pre { overflow-x:auto; margin:16px 0; padding:16px; border:1px solid var(--line); border-left:3px solid var(--terra); background:#f5f6f8; color:#24304a; font:12.5px/1.55 Consolas,Menlo,monospace; }
+    pre code { padding:0; background:transparent; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:20px; }
+    .metric { min-height:120px; padding:16px; border:1px solid var(--line); border-top:3px solid var(--terra); background:var(--alt); }
+    .metric strong { display:block; margin-bottom:6px; color:var(--indigo); font:700 25px/1.1 Georgia,serif; } .metric span { display:block; color:var(--muted); font-size:13px; line-height:1.45; }
+    .two-col { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+    .panel { padding:16px; border:1px solid var(--line); border-top:3px solid var(--indigo); background:var(--alt); }
+    .panel h3 { margin-top:0; color:var(--deep); }
+    .mermaid { overflow-x:auto; padding:16px; border:1px solid var(--line); background:#fbfcfe; }
+    @media (max-width:920px) { nav { position:static; } .grid,.two-col { grid-template-columns:1fr; } }
+    @media print { body { background:#fff; } .topbar,nav { display:none; } .page { max-width:none; padding:0; } section { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+  <div class="topbar"><div class="topbar-inner"><span class="brand"><a href="../../">xLLM Notes</a></span><span class="crumb">/ reports / glm53-replayssm-ring-design</span></div></div>
+  <div class="page">
+    <header>
+      <div class="eyebrow">Design Review · GLM5.3 Flash · NPU</div>
+      <h1>GLM5.3 ReplaySSM Ring Buffer 设计方案</h1>
+      <p class="subtitle">本文把 xLLM 当前实现与 SGLang KDA MTP、vLLM ReplaySSM、vLLM-Ascend NPU 适配逐项对照，并给出可以审查、分阶段实现和回滚的 ring buffer 方案。核心结论先写清：当前 xLLM 是固定 4 行窗口暂存，不是真正的循环 ring；下一步优先复用 SGLang 的 MTP 事务语义和 fused ring write，暂不把 vLLM 的周期性 flush 直接搬到 MTP。</p>
+      <div class="meta"><span class="tag accent">Review requested</span><span class="tag">GLM-5.3-Flash</span><span class="tag">MTP=3 / verify width=4</span><span class="tag">Ascend NPU</span><span class="tag">2026-10-03</span></div>
+    </header>
+    <nav aria-label="目录"><a href="#decision">审查结论</a><a href="#sources">源码对照</a><a href="#current">当前实现</a><a href="#comparison">实现比较</a><a href="#design">目标设计</a><a href="#abi">接口与内存</a><a href="#plan">分阶段计划</a><a href="#validation">验证</a><a href="#risks">风险与问题</a></nav>
+    <main>
+      <section id="decision">
+        <h2>1. 审查结论</h2>
+        <div class="callout warning"><strong>现状：</strong>xLLM 已经有 ReplaySSM 的 fold 和 stage 算子，但没有真正的 circular ring。每个请求槽位只分配 <code>raw_key/raw_value/gate/beta</code> 的 4-token 暂存窗口，提交后立即把已接受前缀 fold 回持久 state；<code>pending</code> 只是有效性标记，没有 head/tail、cursor、base 或周期性 flush。</div>
+        <div class="grid">
+          <div class="metric"><strong>已实现</strong><span>TileLang AOT 的 fold/stage + Python MTP 调用；first KDA layer 批量 fold all layers。</span></div>
+          <div class="metric"><strong>4 rows</strong><span>当前窗口容量等于 GLM5 MTP=3 的 verify width，不支持跨 verify 保存未提交数据。</span></div>
+          <div class="metric"><strong>SGLang</strong><span>KDA 也是 fold-every-commit；其关键性能点是 recurrent verify 内直接写 ring。</span></div>
+          <div class="metric"><strong>vLLM</strong><span>16-token 真循环 ring + output-only periodic flush，但明确拒绝 speculative decoding。</span></div>
+        </div>
+        <p>因此“需要不要 ring”要拆成两个问题：第一，是否需要一个按 token 位置管理的 raw-input window；答案是需要，SGLang 的 MTP 方案已经证明这是正确语义。第二，是否现在就需要 vLLM 那种跨多个 decode step 的周期性 circular flush；对 GLM5 MTP，答案是暂不直接做，因为 verify 结果在 commit 前可能被拒绝，事务边界与普通单 token decode 不同。</p>
+        <div class="callout"><strong>推荐决策：</strong>先把 xLLM 的 4 行暂存升级成“有明确 cursor/valid_len 的窗口 ring 接口”，再把 ring write 融入 NPU recurrent verify，去掉独立 stage 和 <code>contiguous()</code>。只有当这条路径完成事务语义和性能验证后，才评估容量 16/32 的周期性 flush。</div>
+      </section>
+
+      <section id="sources">
+        <h2>2. 源码和证据范围</h2>
+        <div class="table-wrap"><table><thead><tr><th>项目</th><th>本次核对的路径</th><th>关键文件 / 结论</th></tr></thead><tbody>
+          <tr><td>xLLM</td><td><code>/export/home/dengyingxu1/projects/xllm-main-cann9-20260911</code></td><td><code>xllm/python/attention/npu_paged_attention.py</code> 的 <code>_KdaReplayWindow</code>、<code>kda_replayssm_fold_all</code>、<code>kda_replayssm_stage</code>；当前是固定窗口。</td></tr>
+          <tr><td>SGLang</td><td><code>/export/home/dengyingxu1/projects/sglang</code></td><td><code>python/sglang/kernels/ops/attention/fla/kda_replayssm_spec_decode.py</code>：明确写出 fold-every-commit、无 periodic flush；<code>fused_kda_conv_recurrent_verify.py</code>：在 recurrent verify 内写四类 raw ring。</td></tr>
+          <tr><td>vLLM-Ascend</td><td><code>/export/home/dengyingxu1/projects/vllm-ascend-main</code></td><td><code>vllm_ascend/worker/npu_input_batch.py</code> 明确注明 NPU 不实现 Mamba ReplaySSM；<code>patch_bind_kv_cache.py</code> 只做上游 tracker 兼容。</td></tr>
+          <tr><td>vLLM 上游实现</td><td><code>/export/home/dengyingxu1/projects/vllm-ascend-main-vllm</code>（含 ReplaySSM 的上游树）</td><td><code>vllm/v1/attention/backends/mamba_attn.py</code>、<code>selective_state_update_replayssm_output_only.py</code>：16-token circular ring、<code>write_pos</code>、<code>is_flush</code>、<code>bc_pre_scratch</code>；<code>vllm/config/vllm.py</code> 禁止 speculative decoding。</td></tr>
+          <tr><td>旧 vLLM 树</td><td><code>/export/home/dengyingxu1/projects/vllm</code></td><td>当前 <code>doc-v0.17.0rc1</code> 树没有 ReplaySSM 实现，不能把它当作实现依据。</td></tr>
+        </tbody></table></div>
+        <p>本文比较的是源码行为，不是根据名字推断。vLLM-Ascend 的“支持上游参数”不等于 Ascend NPU 已经执行 ReplaySSM；这一点在方案中单独列出，避免把兼容层误当成算子实现。</p>
+      </section>
+
+      <section id="current">
+        <h2>3. xLLM 当前实现到底做了什么</h2>
+        <p>当前代码位于 <code>xllm/python/attention/npu_paged_attention.py:84</code> 附近。每层每个物理 state slot 分配：</p>
+        <pre><code>raw_key   : [num_slots, 4, H, 128]       bf16
+raw_value : [num_slots, 4, HV, 128]      bf16
+gate      : [num_slots, 4, HV, 128]      bf16
+beta      : [num_slots, 4, HV]            bf16
+pending   : [num_slots]                   int32</code></pre>
+        <ol>
+          <li><strong>verify 开始：</strong>根据接受长度和 <code>pending</code> 计算每个请求需要从 raw window fold 的历史 token 数；同一批次的 <code>prior_lengths</code> 在 Python 侧缓存，避免每一层重复计算。</li>
+          <li><strong>第一层：</strong>收集所有 KDA 层的 state/raw tensors，调用一次 <code>torch.ops.xllm_ops.kda_replayssm_fold_all</code>；如果 ABI 不支持全层批量，则按层调用。</li>
+          <li><strong>recurrent verify：</strong>调用外部 <code>recurrent_kda</code>，使用已提交 state 作为初始状态，设置 <code>output_final_state=False, inplace_final_state=True</code>。</li>
+          <li><strong>写入 raw window：</strong>多序列路径调用 <code>kda_replayssm_stage</code>；单序列路径用四个 <code>index_copy_</code>。这就是当前主要的额外 launch/copy 成本。</li>
+          <li><strong>slot reuse：</strong>通过 <code>slot_owners</code> 识别物理槽位换请求，并跨层清零 <code>pending</code>；但当前没有 generation、cursor 或环覆盖保护。</li>
+        </ol>
+        <div class="callout danger"><strong>不能把它称为完整 ring：</strong>写入位置始终是窗口内的固定行，提交后下一轮重新从第 0 行开始；没有 <code>(base + t) % capacity</code>，也没有在覆盖前判断“未提交数据是否仍有效”。</div>
+        <p>已有 fold/stage 的 Python fake、C++ schema、TileLang wrapper 和 CMake AOT 注册，位置分别是 <code>xllm/python/kernels_npu/_custom_op.py</code>、<code>xllm/core/kernels/npu/npu_ops_library.cpp</code>、<code>xllm/core/kernels/npu/tilelang/*replayssm*</code>。这为下一步扩展接口提供了落点，不需要重新设计算子注册链路。</p>
+      </section>
+
+      <section id="comparison">
+        <h2>4. SGLang、vLLM、vLLM-Ascend 对比</h2>
+        <div class="table-wrap"><table><thead><tr><th>维度</th><th>xLLM 当前</th><th>SGLang KDA MTP</th><th>vLLM 上游 ReplaySSM</th><th>vLLM-Ascend NPU</th></tr></thead><tbody>
+          <tr><td>目标模型 / 模式</td><td>GLM5 KDA，MTP verify</td><td>KDA/GDN，MTP verify</td><td>Mamba2，标准单 token decode</td><td>Ascend 适配层；没有 Mamba ReplaySSM NPU kernel</td></tr>
+          <tr><td>缓存内容</td><td>raw k/v/gate/beta，4 行</td><td>rawv、rawk、g、beta，短窗口</td><td>x、dt、B，默认 16 行</td><td>仅接收 <code>use_replayssm</code> 参数以保持接口兼容</td></tr>
+          <tr><td>位置管理</td><td>固定行 0..3，只有 pending</td><td>当前 spec window 的 0..spec_len；不是 periodic circular ring</td><td><code>decode_base</code> + <code>write_pos</code>，按 buffer_len 取模</td><td>无实际 ring cursor</td></tr>
+          <tr><td>提交 / flush</td><td>每次接受结果立即 exact fold</td><td>每次接受结果 exact fold，所有 KDA 层可单 launch</td><td>写满或 block 边界时 flush，output-only kernel 重建 state</td><td>没有对应 NPU flush kernel</td></tr>
+          <tr><td>verify 写入</td><td>recurrent_kda 后独立 stage / index_copy</td><td>fused conv+recurrent verify 内直接写 raw ring</td><td>output-only Triton kernel 同时写 ring、增量更新或 flush</td><td>未实现</td></tr>
+          <tr><td>speculative decode</td><td>核心目标</td><td>核心目标</td><td>配置明确拒绝 <code>--use-replayssm</code> 与 speculative decoding</td><td>MTP 兼容链存在，但 ReplaySSM 不是 NPU 执行路径</td></tr>
+          <tr><td>运行时形态</td><td>TileLang AOT stage/fold；recurrent op 外部</td><td>CUDA Triton/CuteDSL，部分 fused kernel</td><td>CUDA Triton，graph metadata 设备化</td><td>Ascend ACL/自定义 op；目前没有 ReplaySSM 实现</td></tr>
+        </tbody></table></div>
+        <h3>关键差异</h3>
+        <ul>
+          <li><strong>SGLang 解决的是 MTP 事务问题：</strong>verify 产生的 token 先保存 raw 输入，只有被接受的前缀才从 committed checkpoint 精确 fold；拒绝的尾部不进入 state。它叫 ring，但当前 KDA 文件明确说明没有 circular ring / periodic flush。</li>
+          <li><strong>vLLM 解决的是长 decode 的 state materialization 成本：</strong>state 每隔 16 token 才完整 flush，中间用缓存的 x/dt/B 做 output-only 更新。因此它的 cursor、flush、scratch 设计不能直接套到 MTP。</li>
+          <li><strong>vLLM-Ascend 的可复用点是接口和 slot 生命周期：</strong>tracker 随请求 slot swap/reorder，metadata 需保持 graph-safe；不能从它推导出 NPU ring kernel 已存在。</li>
+        </ul>
+      </section>
+
+      <section id="design">
+        <h2>5. 建议的目标设计</h2>
+        <p>目标是保留 SGLang 的正确性边界，吸收 vLLM 的显式位置元数据和 graph-safe slot 生命周期，并在 Ascend 上把写入融合进 recurrent verify。设计分为两个模式，默认只启用模式 A。</p>
+        <div class="two-col">
+          <div class="panel"><h3>模式 A：MTP transactional window（首选）</h3><p>容量至少 <code>1 + num_speculative_tokens</code>，例如 MTP=3 时为 4。每次 verify 只写当前 draft window；commit 时按接受长度从 committed state 精确 fold。可以有 ring 的位置接口，但一次提交后清空 valid_len，不做跨轮覆盖。</p></div>
+          <div class="panel"><h3>模式 B：periodic circular flush（后续实验）</h3><p>容量 16/32，保留多个已验证 decode step，写满或边界到达时 flush。只有在 verify 状态也具备事务隔离、或明确允许把输出直接写入 committed state 后才能使用。不能把 vLLM 的普通 decode 算法原样用于 MTP。</p></div>
+        </div>
+        <pre class="mermaid">flowchart LR
+  A["committed state h0"] --> B["MTP recurrent verify"]
+  B --> C["raw ring write\n每个 draft token"]
+  C --> D{"accept_len"}
+  D -->|"0..T"| E["exact fold accepted prefix"]
+  D -->|"reject tail"| F["invalidate tail only"]
+  E --> A
+  F --> A
+  G["slot reuse: owner/generation"] --> C</pre>
+        <h3>必须保持的状态不变量</h3>
+        <ol>
+          <li><code>h0</code> 始终是当前已提交 token 前缀的 state；verify 读取它，不能读取上一次 verify 的未提交尾部。</li>
+          <li>ring 中保存的字段必须与 recurrent kernel 的输入契约一致：pre-norm key、进入 recurrence 前的 value、与 gate/beta 的精度和变换顺序一致。fold 不得改用数学等价但 reduction order 不同的实现，否则会破坏 bitwise parity。</li>
+          <li>commit 只 fold <code>[0, accept_len)</code>；<code>[accept_len, verify_width)</code> 必须失效，下一轮不能被当作历史输入。</li>
+          <li>物理 slot 换 request 时，owner/generation 和 valid_len 必须一起更新；任何旧请求的 raw 数据都不能被新请求看到。</li>
+          <li>同一请求在所有 KDA 层使用一致的 window metadata；fold all layers 时 layer-major stride 必须保持静态，适配 ACL graph。</li>
+        </ol>
+      </section>
+
+      <section id="abi">
+        <h2>6. 数据布局与算子接口建议</h2>
+        <h3>6.1 Ring storage</h3>
+        <pre><code># mode A 的最小布局；L=window_capacity，默认 1+MTP
+raw_key   [num_layers, num_slots, H,  L, K]   bf16
+raw_value [num_layers, num_slots, HV, L, V]   bf16
+gate      [num_layers, num_slots, HV, L, K]   bf16 或 fp32（与 fold contract 一致）
+beta      [num_layers, num_slots, HV, L]       bf16 或 fp32
+valid_len [num_slots]                          int32
+write_pos [num_slots]                          int32  # mode A 可每轮从 0 开始
+owner_id  [num_slots]                          int64/int32
+generation[num_slots]                          int32</code></pre>
+        <p>当前代码按 layer 分开持有 tensor；第一阶段可以保持这个 ABI，只增加 <code>valid_len/write_pos/generation</code>。不要在 Python 中读取设备上的 cursor 再决定分支，metadata 应作为设备 tensor 传给 AOT op，避免 graph capture 期间 host sync。</p>
+        <h3>6.2 Stage / fold ABI</h3>
+        <pre><code>kda_replayssm_stage(
+    key, value, gate, beta,       # [B, T, H*D] / [B, T, ...]
+    state_indices,                 # [B] physical slots
+    write_pos,                     # [B] int32; mode A 通常 0
+    valid_len,                     # [B] int32; output or in-place
+    raw_key, raw_value, gate_ring, beta_ring,
+    ring_capacity                  # constexpr for AOT specialization
+)
+
+kda_replayssm_fold_all(
+    states, raw_key, raw_value, gate_ring, beta_ring,
+    state_indices, accept_len, valid_len, write_pos,
+    ring_capacity, generation
+)</code></pre>
+        <p>如果 <code>write_pos + t</code> 可能跨尾部，fold 必须以 <code>(write_pos+t) % ring_capacity</code> 按逻辑时间顺序读取；模式 A 可以把容量固定为 verify width，保留这个接口以便后续扩大。fold 完成后把 <code>valid_len=0, write_pos=0</code> 写回。reject-only 的请求也必须清零 valid_len。</p>
+        <h3>6.3 融合写入的推荐位置</h3>
+        <p>最有希望的性能路径是扩展 Ascend 的 recurrent KDA 接口，使它在完成每个 draft token 的 gate/beta/pre-norm 后直接写 raw ring。这样可以删除当前 <code>kda_replayssm_stage</code> launch、四个 <code>index_copy_</code> 和多序列路径的 <code>contiguous()</code>。这对应 SGLang 的 <code>CACHE_RING</code> 分支；不是把 stage 算子再做一个更大的 memcpy。</p>
+        <p>如果当前外部 <code>recurrent_kda</code> ABI 无法扩展，先保留 stage 作为正确性 fallback，并把融合路径做成独立 op，通过 capability/shape dispatch 选择；不能在 Python 侧假设外部 op 会写 ring。</p>
+      </section>
+
+      <section id="plan">
+        <h2>7. 分阶段落地和性能目标</h2>
+        <div class="table-wrap"><table><thead><tr><th>阶段</th><th>实现</th><th>收益预期</th><th>退出条件</th></tr></thead><tbody>
+          <tr><td>A：语义收紧</td><td>把 4 行暂存改为显式 <code>valid_len/write_pos/generation</code>；stage/fold 支持逻辑位置和 wrap；保留 fold-every-commit。</td><td>主要是可验证性和后续扩容，单独做可能没有 TPOT 收益。</td><td>接受长度 0..4、slot reuse、wrap、混合 batch 全部和 baseline 一致。</td></tr>
+          <tr><td>B：融合写入</td><td>在 Ascend recurrent verify 中直接写 raw k/v/gate/beta；stage 仅保留 fallback；fold 继续 all-layers batch。</td><td>目标是消除独立 stage launch 和 contiguous/copy；优先改善 C1/C4 TPOT。</td><td>graph replay 稳定，C1/C4 在 prefix cache 关闭、MTP=3 下有可重复收益。</td></tr>
+          <tr><td>C：容量实验</td><td>评估 <code>L=16/32</code> 的 transactional pending ring；只有事务安全后再加入 periodic flush。</td><td>可能降低长 decode 的 fold 频率，但 MTP 场景未必收益。</td><td>证明未提交 draft 不会被覆盖；若收益不稳定，回滚到 B。</td></tr>
+        </tbody></table></div>
+        <p>当前已测的一组参考数字只能作为阶段性方向：外部编译产物 baseline（prefix cache 关闭、TP8、MTP=3）C1 约 56.88 ms、C4 约 63.19 ms；当前 xLLM fold/stage 路径的一次干净运行 C1 约 58.65 ms、C4 约 60.21 ms。C4 有约 4.7% 改善，C1 仍略慢，说明下一步应优先减少每轮固定 launch/copy，而不是盲目扩大 ring。该数字不是最终结论，必须在同一启动参数、同一 warmup、同一 prefix-cache 关闭条件下复测。</p>
+      </section>
+
+      <section id="validation">
+        <h2>8. 验证矩阵</h2>
+        <div class="table-wrap"><table><thead><tr><th>层级</th><th>用例</th><th>必须观察</th></tr></thead><tbody>
+          <tr><td>算子差分</td><td>accept_len=0、1、2、3、4；随机 state/raw inputs</td><td>fold state 与原始 recurrent 逐 token reference 一致；gate/beta 精度和 reduction order 不变。</td></tr>
+          <tr><td>ring 位置</td><td>capacity=4/16；start=0、capacity-2；T=1..4</td><td>wrap 读取顺序正确，拒绝尾部没有残留贡献。</td></tr>
+          <tr><td>slot 生命周期</td><td>同一 slot 换 owner；batch reorder；空槽补齐 graph shape</td><td>generation/valid_len 清零；新请求不读旧 raw；设备 metadata 不触发 host sync。</td></tr>
+          <tr><td>层间一致性</td><td>1 层、全 KDA 层、all-layer fold 与逐层 fold</td><td>state 和输出一致，layer-major stride 不溢出。</td></tr>
+          <tr><td>服务 E2E</td><td>C1/C4，MTP=3，prefix cache 关闭，ACL graph 开启</td><td>acceptance、输出 token、TPOT、首次请求和稳定请求分别记录；与外部编译产物同参数比较。</td></tr>
+          <tr><td>回归</td><td>MTP=0、verify width=1、非 KDA 模型</td><td>新 ring 分支完全旁路，原路径性能和精度不变。</td></tr>
+        </tbody></table></div>
+        <p>每轮性能测试都要保存启动命令、模型路径、卡数、MTP 配置、prefix-cache 配置、graph 配置、commit、warmup 和原始日志到 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>；设计文档只引用结果，不把一次异常 TPOT 当成结论。</p>
+      </section>
+
+      <section id="risks">
+        <h2>9. 风险、未决问题和审查点</h2>
+        <div class="table-wrap"><table><thead><tr><th>问题</th><th>为什么必须先解决</th><th>建议决策</th></tr></thead><tbody>
+          <tr><td>外部 recurrent_kda 是否能接收 ring 输出？</td><td>若不能，Python stage 仍存在，融合收益拿不到。</td><td>先确认 ABI；不能扩展就做 Ascend 专用 fused verify op，保留 stage fallback。</td></tr>
+          <tr><td>gate/beta 到底以 bf16 还是 fp32 保存？</td><td>SGLang 的 g/beta 是 fp32，而当前 xLLM 暂存是 bf16；改变精度会影响 parity。</td><td>以 xLLM recurrent 输入 contract 和 bitwise reference 为准，先做双精度差分再定。</td></tr>
+          <tr><td>是否真的需要 16/32 行 circular ring？</td><td>MTP 的 draft tail 在 commit 前不可覆盖；容量扩大不自动带来收益。</td><td>模式 A 先固定 verify width；只有 benchmark 证明 fold 频率是瓶颈才做模式 C。</td></tr>
+          <tr><td>所有层一次 fold 的 launch 是否稳定？</td><td>layer-major stride、动态层数和 graph static shape 可能冲突。</td><td>保留 per-layer fallback，并在固定模型层数上优先验证 all-layer。</td></tr>
+          <tr><td>如何证明“算子确实被调用”？</td><td>只看到 Python 分支或编译产物不代表运行时走到了 op。</td><td>在 stage/fold wrapper 计数或 debug trace；E2E 日志同时记录 op path、MTP acceptance 和 kernel timing。</td></tr>
+        </tbody></table></div>
+        <div class="callout"><strong>请审查这三项：</strong>① 是否同意先实现 SGLang 风格的 transactional window，而不是直接照搬 vLLM periodic flush；② 是否同意 fused recurrent verify 是主要性能目标；③ 是否接受 gate/beta 精度以差分结果决定，而不是为了布局直接降成 bf16。</div>
+      </section>
+    </main>
+  </div>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({startOnLoad:true,theme:"base",securityLevel:"loose",themeVariables:{primaryColor:"#eef0fd",primaryBorderColor:"#3b4bd8",primaryTextColor:"#1b2130",lineColor:"#c1583b",fontFamily:"Georgia, serif"},flowchart:{htmlLabels:true,curve:"linear"}});
+  </script>
+</body>
+</html>
