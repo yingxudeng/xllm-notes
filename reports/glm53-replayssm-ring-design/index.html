@@ -61,7 +61,7 @@
       <p class="subtitle">本文把 xLLM 当前实现与 SGLang KDA MTP、vLLM ReplaySSM、vLLM-Ascend NPU 适配逐项对照，并给出可以审查、分阶段实现和回滚的 ring buffer 方案。核心结论先写清：当前 xLLM 是固定 4 行窗口暂存，不是真正的循环 ring；下一步优先复用 SGLang 的 MTP 事务语义和 fused ring write，暂不把 vLLM 的周期性 flush 直接搬到 MTP。</p>
       <div class="meta"><span class="tag accent">Review requested</span><span class="tag">GLM-5.3-Flash</span><span class="tag">MTP=3 / verify width=4</span><span class="tag">Ascend NPU</span><span class="tag">2026-10-03</span></div>
     </header>
-    <nav aria-label="目录"><a href="#decision">审查结论</a><a href="#sources">源码对照</a><a href="#current">当前实现</a><a href="#comparison">实现比较</a><a href="#design">目标设计</a><a href="#abi">接口与内存</a><a href="#plan">分阶段计划</a><a href="#validation">验证</a><a href="#risks">风险与问题</a></nav>
+    <nav aria-label="目录"><a href="#decision">审查结论</a><a href="#latest">最新 DFlash2 证据</a><a href="#sources">源码对照</a><a href="#current">当前实现</a><a href="#comparison">实现比较</a><a href="#design">目标设计</a><a href="#abi">接口与内存</a><a href="#plan">分阶段计划</a><a href="#validation">验证</a><a href="#risks">风险与问题</a></nav>
     <main>
       <section id="decision">
         <h2>1. 审查结论</h2>
@@ -74,6 +74,18 @@
         </div>
         <p>因此“需要不要 ring”要拆成两个问题：第一，是否需要一个按 token 位置管理的 raw-input window；答案是需要，SGLang 的 MTP 方案已经证明这是正确语义。第二，是否现在就需要 vLLM 那种跨多个 decode step 的周期性 circular flush；对 GLM5 MTP，答案是暂不直接做，因为 verify 结果在 commit 前可能被拒绝，事务边界与普通单 token decode 不同。</p>
         <div class="callout"><strong>推荐决策：</strong>先把 xLLM 的 4 行暂存升级成“有明确 cursor/valid_len 的窗口 ring 接口”，再把 ring write 融入 NPU recurrent verify，去掉独立 stage 和 <code>contiguous()</code>。只有当这条路径完成事务语义和性能验证后，才评估容量 16/32 的周期性 flush。</div>
+      </section>
+
+      <section id="latest">
+        <h2>1.1 最新 DFlash2 C1 证据（2026-10-04）</h2>
+        <div class="callout"><strong>统一口径：</strong>使用用户提供的
+          <code>BASELINE_DFLASH2_C1_RESULTS.md</code>：GLM-5.3-Flash-W8A8、TP8/DP1/EP8、DFlash2 draft7、graph 和 schedule overlap 开启、prefix cache 关闭、2048 输入/256 输出、固定 EvalScope C1。MTP3 数字不混入本表。</div>
+        <div class="table-wrap"><table><thead><tr><th>路径</th><th>Avg TPOT</th><th>归一化 decode iteration</th><th>状态</th></tr></thead><tbody>
+          <tr><td>用户提供的外部 DFlash2 baseline</td><td><strong>11.7 ms</strong></td><td>—</td><td>20/20，p50 11.5 ms，p99 13.2 ms，accept 65.2%</td></tr>
+          <tr><td>xLLM ReplaySSM，shared sequence/head transform</td><td>13.23 ms</td><td><strong>约 44.1 ms</strong></td><td>20/20；`runs/dflash2_replayssm_20261004_sigmoidfix_share_nopc/`</td></tr>
+          <tr><td>xLLM 同一 candidate，ReplaySSM disabled</td><td>14.82 ms</td><td>约 44.1 ms</td><td>ReplaySSM fold 开销已接近零，尚未超过同 candidate 的每轮时间</td></tr>
+        </tbody></table></div>
+        <p>因此当前已证明的是 shared schedule 相对 non-shared 的约 3.5% 每轮收益，尚未证明相对用户提供的 11.7 ms 外部产物有绝对 TPOT 收益。两次更激进的 AOT 优化都被回滚：direct UB cache view 在第三条正式请求触发 Ascend <code>507011</code> MTE 越界，dt-bias/exp(A_log) 循环外提在第五条请求复现同类错误。最终稳定源码保持显式 cache-to-UB copy，提交链为 <code>3f0d6ca5b</code> 加回滚保护 <code>c7da4aa03</code>、<code>6a0e050b8</code>；对应详细日志在 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>。</p>
       </section>
 
       <section id="sources">
