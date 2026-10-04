@@ -107,7 +107,7 @@ Tail-E: cached=16256   # 16383 token 请求的最后完整 KV block</code></pre>
           <tr><td>分配压力下的回收入口</td><td>空闲 block 不足时调用 <code>prefix_cache_-&gt;evict()</code></td><td><code>block_manager_impl.cpp:132-149</code></td><td>淘汰是按 block 数量触发的，不能淘汰仍被序列或 probe 持有的 block。</td></tr>
         </tbody></table></div>
         <h3>观察表的当前策略是否合理</h3>
-        <p>作为第一阶段的 admission 过滤器，独立 compact 索引是合理的：它便宜、线程安全、只观察完整 prompt，并避免一次性把所有非 chunk 状态写入 cache。改造后元数据淘汰是确定的 LRU，不再依赖 <code>unordered_map</code> 的任意迭代顺序；它仍只承担“元数据限流”，所以淘汰热点最多让后续少一次准入，不影响正确性。</p>
+        <p>作为第一阶段的 admission 过滤器，独立 compact 索引是合理的：它便宜、线程安全、只观察完整 prompt，并避免一次性把所有非 chunk 状态写入 cache。改造后元数据淘汰是确定的 LRU，不再依赖 <code>unordered_map</code> 的任意迭代顺序；新建路径、慢速修改路径和单键诊断查询会刷新 LRU，shared-lock 下的整条路径观察与查询不刷新 LRU，以避免在每个并发请求上引入独占锁。它仍只承担“元数据限流”，所以淘汰热点最多让后续少一次准入，不影响正确性。</p>
         <p>它仍不是论文中的完整 FLOP-aware 淘汰。观察条目即使对应的真实 prefix-cache block 已经被普通 LRU 淘汰，也不会同步删除；此时再次识别出候选只会让 probe 查不到 block，随后正常重新计算，不影响结果，但会增加一次查找和元数据噪声。若需要严格协调，应把 admission 条目和 KV/LINEAR block 绑定成统一 entry，再实现论文的分数淘汰。</p>
         <h3>真正 prefix cache 的当前策略</h3>
         <p><code>PrefixCache::match()</code>、<code>find()</code> 和 <code>insert()</code> 会把命中的节点移动到 LRU 链尾；<code>evict()</code> 从链头开始扫描，跳过 <code>block.is_shared()</code> 的仍在使用条目。它是按 block 的普通 LRU，不是按请求树节点整体淘汰，也没有 FLOP-aware 分数。</p>
