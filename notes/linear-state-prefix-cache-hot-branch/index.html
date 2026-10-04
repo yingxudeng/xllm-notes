@@ -129,6 +129,8 @@ Tail-E: cached=16256   # 16383 token 请求的最后完整 KV block</code></pre>
         <p>证据文件：</p>
         <ul><li><a href="../../../../workspace/glm53_prefix_cache/e2e_current_20261004_branch4096_compact/results.json">2026-10-04 compact branch_4096 result</a></li><li><a href="../../../../workspace/glm53_prefix_cache/e2e_current_20261004_tail8191_compact/results.json">2026-10-04 compact tail_8191 result</a></li><li><a href="../../../../workspace/glm53_prefix_cache/e2e_current_20261004_alignment_16383_compact_results.json">2026-10-04 compact alignment_16383 result</a></li><li><a href="../../../../workspace/glm53_prefix_cache/e2e_current_20261004_alignment_16383_results.json">2026-10-04 alignment_16383 result</a></li></ul>
         <p>新一轮完整模型复测使用同一个 CANN9 容器、8 张卡、chunk size <code>8192</code> 和显式 <code>ASCEND_CUSTOM_OPP_PATH</code>。真正用于证明“前部非 chunk 高频前缀”的场景是：每个请求总长 25,701，A/B/C 共享的前缀长度恰好为 4,096，后面还有约 21,605 个 token，因此 4,096 明确位于前部，且不是 8,192 chunk 边界。新二进制冷启动结果为 <code>A=0 → B=0 → C=4096</code>。16383 场景同时得到前部 <code>0→8192→8192</code>、尾部 <code>0→16256</code>；8191 场景得到 <code>0→8064</code>。所有请求输出正常。</p>
+        <p>针对后续 1M 上下文并发，admission 索引改为 64 个 hash 分片：一次请求先生成候选，再按分片分组，每个分片只持有自己的 mutex 和 LRU；查询和观察都按固定分片顺序处理，不再让一个 1M 请求独占全局锁。分片仍然使用现有 block-size 链式 hash，没有改变 D 节点或 Mooncake 的 hash 语义。</p>
+        <p>重新构建后的服务复测证据：非 chunk 前部场景 <code>0→0→4096</code>（<a href="../../../../workspace/glm53_prefix_cache/e2e_sharded_20261004_branch4096_clean/results.json">结果</a>），8191 尾部场景 <code>0→8064</code>（<a href="../../../../workspace/glm53_prefix_cache/e2e_sharded_20261004_tail8191_clean/results.json">结果</a>）；8 个并发请求全部返回 HTTP 200。新增的 1M block-level 回归使用 1,000,003 token、4-token hash block、8192 chunk，最深非 chunk 边界为 1,000,000，测试通过耗时 104ms。这里验证的是 admission/hash 路径的 1M 规模，尚未声称完整 45 层模型已经完成 1M token 的真实 NPU E2E。</p>
         <p>另一个 16,383 请求用于验证尾部：前部 chunk 命中 8,192，尾部完整 KV block 命中 16,256。它不能单独证明前部非 chunk 命中，只作为尾部场景补充。</p>
         <p>聚焦单测 <code>BlockManagerPoolTest.RepeatedObservationPromotesNonChunkBranchCheckpoint</code> 和 <code>HotNonChunkBranchCheckpointAndTailAreSavedInOneRequest</code> 通过；完整 <code>block_test</code> 为 43/43，<code>scheduler_test</code> 为 122/122，<code>mtp_prefix_cache_test</code> 为 166/166。</p>
         <h3>三轮 GSM8K 精度复测</h3>
@@ -141,7 +143,7 @@ Tail-E: cached=16256   # 16383 token 请求的最后完整 KV block</code></pre>
       </section>
       <section id="risks">
         <h2>9. 限制与后续观察点</h2>
-        <ul><li>admission 元数据有界，当前按访问 LRU 淘汰，不是 LFU/FLOP-aware；它保护内存，但不会保证最高频分支永久保留。</li><li>线性 state slot 仍可能因为容量回收而丢失早期 checkpoint；这表现为缓存未命中，不影响正确性。</li><li>cache-on 与 cache-off 都暴露了 NPU/图执行重复性波动；发布前应固定执行确定性并保留 cache-off 对照，避免把模型波动误判为缓存回归。</li><li>若要继续贴近论文，应先采集真实请求的复用次数、重算 FLOPs 和 state 内存成本，再设计跨 KV/LINEAR 的统一评分淘汰；当前 LRU 作为确定性的 metadata 上限足够稳妥。</li></ul>
+        <ul><li>admission 元数据有界，当前按分片访问 LRU 淘汰，不是 LFU/FLOP-aware；它保护内存，但不会保证最高频分支永久保留，分片负载不均时各分片会独立淘汰。</li><li>线性 state slot 仍可能因为容量回收而丢失早期 checkpoint；这表现为缓存未命中，不影响正确性。</li><li>cache-on 与 cache-off 都暴露了 NPU/图执行重复性波动；发布前应固定执行确定性并保留 cache-off 对照，避免把模型波动误判为缓存回归。</li><li>若要继续贴近论文，应先采集真实请求的复用次数、重算 FLOPs 和 state 内存成本，再设计跨 KV/LINEAR 的统一评分淘汰；当前 LRU 作为确定性的 metadata 上限足够稳妥。</li></ul>
         <div class="callout"><strong>结论：</strong>保持 D 节点/Mooncake 的 block-size hash；用链式 hash 驱动的紧凑 admission 索引准入非 chunk 热分支；尾巴按最后完整 block 保存。当前实现和本轮真实服务结果符合这一设计，GSM8K 的重复性问题需要单独治理。</div>
       </section>
     </main>
