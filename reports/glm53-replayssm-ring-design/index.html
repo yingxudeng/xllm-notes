@@ -84,8 +84,9 @@
           <tr><td>用户提供的外部 DFlash2 baseline</td><td><strong>11.7 ms</strong></td><td>—</td><td>20/20，p50 11.5 ms，p99 13.2 ms，accept 65.2%</td></tr>
           <tr><td>xLLM ReplaySSM，shared sequence/head transform</td><td>13.23 ms</td><td><strong>约 44.1 ms</strong></td><td>20/20；`runs/dflash2_replayssm_20261004_sigmoidfix_share_nopc/`</td></tr>
           <tr><td>xLLM 同一 candidate，ReplaySSM disabled</td><td>14.82 ms</td><td>约 44.1 ms</td><td>ReplaySSM fold 开销已接近零，尚未超过同 candidate 的每轮时间</td></tr>
+          <tr><td>xLLM shared + int64 slot-index cache</td><td>12.79 ms</td><td>约 44.7 ms</td><td>20/20；相对同配置未缓存索引约 1.1% 每轮改善，收益较小</td></tr>
         </tbody></table></div>
-        <p>因此当前已证明的是 shared schedule 相对 non-shared 的约 3.5% 每轮收益，尚未证明相对用户提供的 11.7 ms 外部产物有绝对 TPOT 收益。三次更激进的 AOT 优化都被放弃：direct UB cache view 在第三条正式请求触发 Ascend <code>507011</code> MTE 越界，dt-bias/exp(A_log) 循环外提在第五条请求复现同类错误，batch-1 stage 替换四次 <code>index_copy_</code> 在第三条请求复现同类错误。最终稳定源码保持显式 cache-to-UB copy 和原 C1 index-copy staging，提交链为 <code>3f0d6ca5b</code> 加回滚保护 <code>c7da4aa03</code>、<code>6a0e050b8</code>；对应详细日志在 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>。</p>
+        <p>因此当前已证明的是 shared schedule 相对 non-shared 的约 3.5% 每轮收益，以及 int64 slot-index cache 的约 1.1% 小幅补充收益；尚未证明相对用户提供的 11.7 ms 外部产物有绝对 TPOT 收益。direct UB cache view 和 dt-bias/exp(A_log) 循环外提仍因 AOT <code>507011</code> 回退。batch-1 stage 替换在加入 <code>slot &lt; num_slots</code> 防护后两轮完整服务审计通过，但归一化结果为 44.7/46.6 ms，故 C1 仍保留四次 <code>index_copy_</code>；多序列 stage 使用有界 kernel。对应提交为 <code>3f0d6ca5b</code>、<code>47e38c8a0</code> 和 <code>10e86c6e4</code>，详细日志在 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>。</p>
       </section>
 
       <section id="sources">
