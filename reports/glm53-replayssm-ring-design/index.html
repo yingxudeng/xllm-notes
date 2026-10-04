@@ -85,7 +85,7 @@
           <tr><td>xLLM ReplaySSM，shared sequence/head transform</td><td>13.23 ms</td><td><strong>约 44.1 ms</strong></td><td>20/20；`runs/dflash2_replayssm_20261004_sigmoidfix_share_nopc/`</td></tr>
           <tr><td>xLLM 同一 candidate，ReplaySSM disabled</td><td>14.82 ms</td><td>约 44.1 ms</td><td>ReplaySSM fold 开销已接近零，尚未超过同 candidate 的每轮时间</td></tr>
         </tbody></table></div>
-        <p>因此当前已证明的是 shared schedule 相对 non-shared 的约 3.5% 每轮收益，尚未证明相对用户提供的 11.7 ms 外部产物有绝对 TPOT 收益。两次更激进的 AOT 优化都被回滚：direct UB cache view 在第三条正式请求触发 Ascend <code>507011</code> MTE 越界，dt-bias/exp(A_log) 循环外提在第五条请求复现同类错误。最终稳定源码保持显式 cache-to-UB copy，提交链为 <code>3f0d6ca5b</code> 加回滚保护 <code>c7da4aa03</code>、<code>6a0e050b8</code>；对应详细日志在 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>。</p>
+        <p>因此当前已证明的是 shared schedule 相对 non-shared 的约 3.5% 每轮收益，尚未证明相对用户提供的 11.7 ms 外部产物有绝对 TPOT 收益。三次更激进的 AOT 优化都被放弃：direct UB cache view 在第三条正式请求触发 Ascend <code>507011</code> MTE 越界，dt-bias/exp(A_log) 循环外提在第五条请求复现同类错误，batch-1 stage 替换四次 <code>index_copy_</code> 在第三条请求复现同类错误。最终稳定源码保持显式 cache-to-UB copy 和原 C1 index-copy staging，提交链为 <code>3f0d6ca5b</code> 加回滚保护 <code>c7da4aa03</code>、<code>6a0e050b8</code>；对应详细日志在 <code>/export/home/dengyingxu1/workspace/glm53_replayssm_npu</code>。</p>
       </section>
 
       <section id="sources">
