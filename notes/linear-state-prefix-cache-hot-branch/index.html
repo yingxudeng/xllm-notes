@@ -35,6 +35,8 @@
     code { padding:2px 6px; border-radius:2px; background:#e8ebf3; color:var(--deep); font-family:Consolas,Menlo,monospace; font-size:.9em; }
     pre { overflow-x:auto; padding:16px; border:1px solid var(--line); border-left:3px solid var(--terra); background:#f5f6f8; color:#24304a; font:12.5px/1.55 Consolas,Menlo,monospace; }
     pre code { padding:0; background:transparent; }
+    #generation,#generation h3 { scroll-margin-top:90px; }
+    #generation :not(pre) > code { overflow-wrap:anywhere; }
     @media print { body { background:#fff; } .topbar,nav { display:none; } .page { max-width:none; padding:0; } section { break-inside:avoid; } }
   </style>
 </head>
@@ -44,10 +46,10 @@
     <header>
       <div class="eyebrow">Design · E2E Evidence</div>
       <h1>Linear-State 非 Chunk 热分支与尾块缓存</h1>
-      <p class="subtitle">设计目标是同时保留高频但非 chunk 对齐的前缀，以及请求末尾最后一个完整 KV block。本文记录当前实现、hash 边界、容量语义和 2026-10-04 在 CANN9 容器中的复测结果。</p>
+      <p class="subtitle">设计目标是同时保留高频但非 chunk 对齐的前缀，以及请求末尾最后一个完整 KV block。第 1–9 节保留 2026-10-04 / 06 的历史设计与实测；第 10 节补充 2026-10-28 当前分支的 generation 用途、更新时机和整数边界。两部分对应不同版本，不应混读。</p>
       <div class="meta"><span class="tag accent">Validated</span><span class="tag">GLM-5.3-Flash</span><span class="tag">Prefix Cache</span><span class="tag">Frequency Admission</span><span class="tag">Compact metadata</span></div>
     </header>
-      <nav aria-label="目录"><a href="#goal">目标</a><a href="#design">设计</a><a href="#observation">观察表</a><a href="#hash">Hash 边界</a><a href="#semantics">命中语义</a><a href="#eviction">两类淘汰</a><a href="#paper">论文对照</a><a href="#e2e">端到端证据</a><a href="#risks">限制</a></nav>
+      <nav aria-label="目录"><a href="#goal">目标</a><a href="#design">设计</a><a href="#observation">观察表</a><a href="#hash">Hash 边界</a><a href="#semantics">命中语义</a><a href="#eviction">两类淘汰</a><a href="#paper">论文对照</a><a href="#e2e">端到端证据</a><a href="#risks">限制</a><a href="#generation">generation 详解</a></nav>
     <main>
       <section id="goal">
         <h2>1. 目标与约束</h2>
@@ -153,6 +155,155 @@ Tail-E: cached=16256   # 16383 token 请求的最后完整 KV block</code></pre>
         <h2>9. 限制与后续观察点</h2>
         <ul><li>admission 元数据有界，当前按分片访问 LRU 淘汰，不是 LFU/FLOP-aware；它保护内存，但不会保证最高频分支永久保留，分片负载不均时各分片会独立淘汰。</li><li>线性 state slot 仍可能因为容量回收而丢失早期 checkpoint；这表现为缓存未命中，不影响正确性。</li><li>cache-on 与 cache-off 都暴露了 NPU/图执行重复性波动；发布前应固定执行确定性并保留 cache-off 对照，避免把模型波动误判为缓存回归。</li><li>若要继续贴近论文，应先采集真实请求的复用次数、重算 FLOPs 和 state 内存成本，再设计跨 KV/LINEAR 的统一评分淘汰；当前 LRU 作为确定性的 metadata 上限足够稳妥。</li></ul>
         <div class="callout"><strong>结论：</strong>保持 D 节点/Mooncake 的 block-size hash；用链式 hash 驱动的紧凑 admission 索引准入非 chunk 热分支；尾巴按最后完整 block 保存。当前实现和本轮真实服务结果符合这一设计，GSM8K 的重复性问题需要单独治理。</div>
+      </section>
+      <section id="generation" aria-labelledby="generation-title">
+        <h2 id="generation-title">10. generation：热点元数据的“重置代号”</h2>
+        <p><strong>代码时点：2026-10-28，分支 <code>feat/glm53-linear-prefix-cache-hit-op-3</code>，提交 <code>0ad8a4f22</code>。</strong>本节基于该提交的实际实现，不沿用前面历史 radix 方案的字段或计数方式。</p>
+        <div class="callout"><strong>一句话：</strong><code>generation</code> 表示“当前热点表是哪一次清空之后的那一代”。它不是请求编号、命中次数或生成 token 数。它让请求知道：<strong>之前已经记过的票、之前缓存的热点停点，还能不能用于当前这张热点表。</strong></div>
+
+        <h3 id="generation-summary">10.1 先回答最关心的四个问题</h3>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="generation 问答">
+          <table>
+            <thead><tr><th scope="col">问题</th><th scope="col">当前实现的答案</th></tr></thead>
+            <tbody>
+              <tr><td>干什么用？</td><td>配合热点表 reset，隔离旧的<strong>请求计票标记</strong>和<strong>Sequence 停点计划</strong>。</td></tr>
+              <tr><td>什么时候增加？</td><td>启用 prefix cache 时，<code>BlockManagerPool::reset_prefix_cache()</code> 清空策略表，然后对每个存在的 DP 策略执行一次 <code>++generation_</code>。普通请求、命中和 token 更新不增加它。</td></tr>
+              <tr><td>会超过 int64 上限吗？</td><td>它实际是 <code>uint64_t</code>，不是 <code>int64_t</code>。跨过 <code>2^63 - 1</code> 仍可正常表示；只有理论上的 <code>uint64_t</code> 极限需要另论，见 10.6。</td></tr>
+              <tr><td>是不是必须？</td><td><strong>不是 hash 命中算法的必要参数，但在当前“热点表可以 reset、请求状态可能继续存在”的契约下，需要它或等价的失效机制。</strong>不能只删字段和比较，就声称行为不变。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="generation-fields">10.2 三个位置，不是三个独立计数器</h3>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="generation 的三个存储位置">
+          <table>
+            <thead><tr><th scope="col">位置 / 初始值</th><th scope="col">谁拥有</th><th scope="col">何时写入、用于什么</th></tr></thead>
+            <tbody>
+              <tr><td><code>LinearPrefixPolicyState::generation_</code><br><code>uint64_t = 0</code></td><td>每个启用 admission 的 DP 各有一份</td><td>这是比较时的基准代号。只在 pool 的 prefix-cache reset 中递增；与策略表一起受该 DP 的 mutex 保护。</td></tr>
+              <tr><td><code>SequenceParams::linear_prefix_observed_generation</code><br><code>shared_ptr&lt;atomic&lt;uint64_t&gt;&gt;</code><br>初始为 <code>UINT64_MAX</code></td><td>一个请求的派生 Sequence 共享</td><td>记住“这个请求上次在哪一代贡献过观察”。首次满足观察条件时，<code>exchange(current_generation)</code> 写入当前代号；旧值不同才记票。</td></tr>
+              <tr><td><code>Sequence::linear_prefix_checkpoint_</code><br>初始为 <code>nullopt</code></td><td>当前 Sequence 私有</td><td>首次规划后存 <code>{token_count, generation, dp_rank}</code>。之后只有代号和 DP 都一致，才直接复用计划。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>传给 <code>mark_linear_prefix_observed(generation)</code>、<code>linear_prefix_checkpoint_tokens(generation)</code> 和 <code>set_linear_prefix_checkpoint_tokens(..., generation)</code> 的参数，都是把当前 DP 的代号传过去<strong>比较或盖章</strong>，不是每调用一次就把 pool 的代号加一。</p>
+        <p><code>SequencesGroup</code> 为一个新请求创建共享的原子标记；它派生出的 Sequence 使用同一个标记，拷贝构造也保留共享关系。单独构造的 Sequence 在没有传入标记时自行创建。这样 cache、释放、重试以及同请求的多条分支，不会在同一代里重复贡献观察。</p>
+        <p>计划中的 <code>token_count == 0</code> 不是“还没算”，而是“已经算过，本轮不加额外热点停点”。因此 <code>{0, generation, dp_rank}</code> 也会被缓存；<code>nullopt</code> 才表示需要重新规划。</p>
+
+        <h3 id="generation-update">10.3 什么时候更新？把“递增”和“记录”分开看</h3>
+        <pre><code>BlockManagerPool::reset_prefix_cache()
+  prefix cache 未启用：直接返回
+  否则先 reset 各 block manager 的 prefix cache
+  对每个非空 LinearPrefixPolicyState 加锁：
+    policy_.reset()       → 清空 observations_ 和 LRU
+    ++generation_        → 新一代
+
+不遍历所有 Sequence，也不立即改写它们的标记或计划。
+请求下一次观察 / 规划时，比较当前代号，按需重新记票 / 规划。</code></pre>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="generation 生命周期事件表">
+          <table>
+            <thead><tr><th scope="col">事件</th><th scope="col">DP 的 generation_</th><th scope="col">请求计票标记 / 私有计划</th></tr></thead>
+            <tbody>
+              <tr><td>构造新的 pool / 重启后重建</td><td>从 0 开始，不持久化</td><td>新请求的标记为 <code>UINT64_MAX</code>，计划为空。</td></tr>
+              <tr><td>首次规划热点停点</td><td>不变</td><td>写入带当前代号和 DP 的计划，包括结果为 0 的情况。</td></tr>
+              <tr><td>完成 prompt，进入有效观察</td><td>不变</td><td>标记记录当前代号；该请求本代首次观察才向热点表记票。</td></tr>
+              <tr><td>同一请求再次 cache / deallocate</td><td>不变</td><td>标记已是同代，不重复记票。</td></tr>
+              <tr><td>命中 / 未命中、decode token 增长、LRU 淘汰、其他请求把前缀变热</td><td>不变</td><td>这些事件本身不会因为代号变化而使已有计划失效。</td></tr>
+              <tr><td><code>Sequence::reset()</code></td><td>不变</td><td><strong>清私有计划，保留共享计票标记</strong>；下一轮可以重算停点，但不能重复给同一代投票。</td></tr>
+              <tr><td>当前 Sequence 改 DP</td><td>不因此递增</td><td>计划读取时检查 DP，不匹配就重算；共享计票标记保留。</td></tr>
+              <tr><td>pool 的 <code>reset_prefix_cache()</code></td><td>每个已启用策略的 DP 加一</td><td>旧标记、旧计划不立即改写；下一次使用时因代号不同而按新一代处理。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>观察入口是 <code>BlockManagerPool::cache(Sequence*)</code>、普通 pool 的 <code>deallocate(Sequence*)</code> 以及 hierarchy pool 的释放路径。还要满足：Sequence 非空、不是 graph warmup、完整 prompt 已计算，以及对应 DP 的 admission 已启用。<strong>未完成 prompt 不记票，reset 后也不会自动给所有活请求补票。</strong></p>
+        <p><strong>现有生产调用链不是假设：</strong>当前代码中，普通无参唤醒路径会在 <code>engine_-&gt;wakeup(options)</code> 成功、<code>enable_sleep_mode</code> 开启且 scheduler 存在时触发 reset：</p>
+        <pre><code>APIService::do_wakeup()：没有 remote_addrs 的分支
+  → LLMMaster::wakeup()
+  → engine_-&gt;wakeup(options) 成功，且 enable_sleep_mode
+  → scheduler_-&gt;reset_prefix_cache()
+  → ContinuousScheduler::reset_prefix_cache()
+  → BlockManagerPool::reset_prefix_cache()
+  → policy_.reset() + ++generation_</code></pre>
+        <p>注意分支边界：带远程权重地址的 API 分支调用 <code>wakeup(const WakeupOptions&amp;)</code>，该重载本身没有上述 scheduler reset；不能笼统地说“每种 wakeup 都增加 generation”。直接 sleep、pause、resume 也不是这里的递增语句。普通持续推理若没有调用 prefix-cache reset，代号可以一直为 0；它并不随 QPS 增长。</p>
+
+        <h3 id="generation-examples">10.4 两个用途，各看一个例子</h3>
+        <p><strong>用途 A：清表以后，活着的请求可以为新表重新贡献一次观察。</strong>假设请求 R 的共享标记初始为 <code>UINT64_MAX</code>，当前代号为 7：</p>
+        <pre><code>第 7 代，R 首次完成 prompt：exchange(7) 返回 UINT64_MAX → 记一次
+第 7 代，R 再次 cache / 释放 / 由同组分支进入：返回 7 → 不记
+第 7 代，R 被抢占并 Sequence::reset()：标记仍为 7 → 不重复记
+
+pool reset：热点历史被清空，代号从 7 变成 8；R 的标记仍为 7
+R 后续再次满足完整 prompt 的观察条件：exchange(8) 返回 7 → 新表记一次
+第 8 代，R 再次观察：返回 8 → 不记</code></pre>
+        <p>如果只换成终身不清的 <code>observed = true</code>，清空热点表以后，这个活请求永远不能再为新表贡献观察。如果把 bool 放在 <code>Sequence::reset()</code> 里清掉，又会让同一代中的抢占重试重复投票。这就是<strong>“一次执行尝试”和“一代热点历史”不能共用一个 reset 边界</strong>的原因。</p>
+        <p><strong>用途 B：不让旧热点表算出的停点计划跨代复用。</strong></p>
+        <pre><code>第 7 代、DP 0：Sequence 缓存了计划 {停在 3200, 7, 0}
+pool reset：热点表清空，当前代号变成 8
+下一次规划：发现 7 != 8，旧计划不再有效
+查当前空热点表：得到 0，保存 {不额外停, 8, 0}</code></pre>
+        <p>如果删除代号检查，旧的 3200 仍可能直接返回，尽管当前热点表已经没有这个决策依据。这里失效的是<strong>调度停点计划</strong>，不是根据 generation 直接选择 KV 或 LINEAR 物理块；不能把这个后果夸大成“必然读错模型状态”。</p>
+        <p>反过来，其他请求把某个前缀变热时，generation 并不会变。已有计划 0 在同一轮尝试内继续稳定复用；发生 <code>Sequence::reset()</code> 后清掉计划，下一轮才可能重新发现热点。这也解释了为什么有 generation 检查，仍然需要 <code>Sequence::reset()</code> 中的计划清理。</p>
+
+        <h3 id="generation-necessity">10.5 generation 是必须的吗？按契约判断，不按字段名判断</h3>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="generation 必要性与替代方案">
+          <table>
+            <thead><tr><th scope="col">保留的能力 / 方案</th><th scope="col">是否需要 generation</th><th scope="col">代价或约束</th></tr></thead>
+            <tbody>
+              <tr><td>仅讨论 hash 匹配、checkpoint 保存与恢复</td><td>不是算法必需</td><td>当前 generation 不参与 block hash、实际 prefix 匹配键或物理 slot ID。</td></tr>
+              <tr><td>当前 reset 接口允许清热点表，但请求对象可能继续存在</td><td><strong>需要它或等价的跨 reset 失效机制</strong></td><td>必须同时处理旧计票标记与旧计划；只清 <code>policy_</code> 不够。</td></tr>
+              <tr><td>明确约束：不会运行期 reset，或 reset 时已不存在任何旧请求</td><td>可以设计更简单的实现</td><td>请求级共享 bool 可做去重，私有 optional 可缓存计划；但这是收窄 reset 契约，不能默认为现有系统已经保证。</td></tr>
+              <tr><td>去掉代号，reset 时主动遍历并清理所有旧请求字段</td><td>可以替代</td><td>需要覆盖运行、等待、抢占后保留的请求及同组分支；block manager 原本并不拥有所有这些对象，管理和耦合成本更高。</td></tr>
+              <tr><td>去掉计划缓存，每次调度重新查询热点表</td><td>只能替代计划缓存的一部分作用</td><td>仍要解决计票去重，并且会改变当前“同一轮计划稳定，包括 0”的约定，不是直接等价删除。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><strong>对当前 PR 的判断：</strong>保留现有 prefix-cache reset / sleep-mode 唤醒契约时，建议保留 generation。它负责本次 hot-prefix 新增元数据的生命周期，不同于已经从本 PR 撤出的 shared checkpoint 写保护修复。可以换实现，不应无条件删掉；本次只补说明，没有修改运行代码。</div>
+        <p>它也不是并发同步屏障。DP 的策略表和代号由 mutex 保护，请求标记用原子 exchange 做去重；generation 本身不等待 GPU/NPU、不管理物理块存活，也不能替代调用方在 sleep / reset 时所需的调度同步。</p>
+
+        <h3 id="generation-limits">10.6 会超过 int64 限制吗？真实类型与理论边界</h3>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="64 位整数范围">
+          <table>
+            <thead><tr><th scope="col">值</th><th scope="col">十进制</th><th scope="col">与当前代码的关系</th></tr></thead>
+            <tbody>
+              <tr><td><code>INT64_MAX = 2^63 - 1</code></td><td>9,223,372,036,854,775,807</td><td>有符号 64 位上限；不是 generation 的类型上限。</td></tr>
+              <tr><td><code>2^63</code></td><td>9,223,372,036,854,775,808</td><td>已经超过 int64 上限，但仍是合法的 uint64 值。</td></tr>
+              <tr><td><code>UINT64_MAX = 2^64 - 1</code></td><td>18,446,744,073,709,551,615</td><td>代号的无符号上限，同时被新请求的计票标记用作“尚未观察”的哨兵。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>策略代号、共享原子标记、计划里的代号以及这几个方法的参数，当前都是 <code>uint64_t</code>，没有在这条链上转成 <code>int64_t</code>。所以跨过 <code>INT64_MAX</code> 不会在此触发有符号溢出。新请求标记一开始就是 <code>UINT64_MAX</code>，不代表服务已经 reset 了这么多次。</p>
+        <p><strong>但不能说“数学上永远不会出问题”。</strong>当前代码没有跳过哨兵，也没有防回绕逻辑：</p>
+        <ol>
+          <li>当 pool 的代号真的等于 <code>UINT64_MAX</code> 时，新请求的初始标记恰好也等于它。第一次 <code>exchange</code> 会返回相同值，误判为“这代已经观察过”，因而跳过新请求的观察。这是<strong>哨兵冲突</strong>，在下一次加一前就能出现。</li>
+          <li>再执行一次 <code>++generation_</code>，无符号值回绕成 0。若某个旧请求状态真能跨越完整周期仍然存在，旧的 0 可能与新的 0 被误认为同代。这是代号复用问题，不是 int64 的限制。</li>
+        </ol>
+        <p>数量级上，即使假设每秒进行<strong>一百万次全局 prefix-cache reset</strong>，达到 int64 上限也约需 <strong>29.23 万年</strong>，达到 uint64 上限约需 <strong>58.45 万年</strong>（按一年 365.25 天计算）。实际代号只随 reset 增加，且重建 pool 从 0 开始。因此这是需要说明的理论边界，不是正常持续推理的现实容量瓶颈。</p>
+        <p>不要与热点计数混淆：当前 <code>Observation::count</code> 是 <code>uint16_t</code>，pool 使用的热阈值为 2；只有小于阈值时才加一，达到阈值后饱和。命中很多次，不会把 generation 或这个热度计数无限推高。</p>
+
+        <h3 id="generation-evidence">10.7 源码与验证依据</h3>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="generation 源码依据">
+          <table>
+            <thead><tr><th scope="col">要核对的问题</th><th scope="col">0ad8a4f22 中的位置</th></tr></thead>
+            <tbody>
+              <tr><td>类型、初值、唯一递增点</td><td><code>xllm/core/framework/block/block_manager_pool.cpp:58</code>、<code>:451</code></td></tr>
+              <tr><td>完整 prompt 观察条件、读取或缓存计划</td><td><code>xllm/core/framework/block/block_manager_pool.cpp:467</code>、<code>:483</code></td></tr>
+              <tr><td>exchange 去重、代号与 DP 比较</td><td><code>xllm/core/framework/request/sequence.h:326</code>、<code>:331</code>、<code>:341</code></td></tr>
+              <tr><td>UINT64_MAX 哨兵、同组共享</td><td><code>xllm/core/framework/request/sequence.cpp:255</code>；<code>xllm/core/framework/request/sequences_group.cpp:31</code></td></tr>
+              <tr><td>Sequence reset 只清计划，保留计票标记</td><td><code>xllm/core/framework/request/sequence.cpp:995</code></td></tr>
+              <tr><td>实际唤醒 / reset 调用链</td><td><code>xllm/api_service/api_service.cpp:1513</code>；<code>xllm/core/distributed_runtime/llm_master.cpp:355</code>；<code>xllm/core/scheduler/continuous_scheduler.cpp:1005</code></td></tr>
+              <tr><td>热度饱和与策略表清空</td><td><code>xllm/core/framework/block/linear_prefix_admission_policy.cpp:55</code>、<code>:80</code></td></tr>
+              <tr><td>reset 后计划失效、同轮稳定、去重跨 reset</td><td><code>tests/core/framework/block/block_manager_test.cpp:1696</code>、<code>:1891</code>、<code>:2037</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>上轮 <code>hot-prefix-scope-20261028-c9EHN0</code> 验证中，保留范围的 104 条单测通过，包含上述生命周期用例。这是已有证据，本次文档更新没有重新执行整组测试。</p>
+        <p>本次另外在 <code>dyx-xllm-cann9-20260911</code> 用独立 C++ 短程序检查了整数与 exchange 表达式，得到：</p>
+        <pre><code>int64_max=9223372036854775807
+uint64_max=18446744073709551615
+beyond_int64_max=9223372036854775808
+fresh_marker_counted_at_uint64_max=0
+generation_after_wrap=0</code></pre>
+        <p>记录位于源码 checkout 的 <code>build/hot-prefix-generation-doc-20261028-lND8pE/manifest.env</code> 和 <code>integer_bounds.log</code>。这验证的是类型与哨兵表达式，不是实际执行 2^64 次 reset，也不是模型推理精度或并发 reset 安全性验收。</p>
+        <div class="callout"><strong>记住这组区别：</strong>热点表 reset → generation 加一；请求首次观察 → 记录当前 generation；Sequence reset → 清计划但不加代号、不清已观察标记；正常命中 → 不改变 generation。</div>
       </section>
     </main>
   </div>

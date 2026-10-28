@@ -1,5 +1,7 @@
 # 先回答：这两个 reset，到底有没有必要？
 
+<div class="notice"><p><strong>版本说明（2026-10-28 补充）：</strong>下文保留 <code>bc6440e24</code> 时点的审查结论；prompt hash 处的防御性清理后来已在 <code>5a7afdc11</code> 撤回，<code>Sequence::reset()</code> 的计划清理仍保留。基于 <code>0ad8a4f22</code> 的 <a href="../../notes/linear-state-prefix-cache-hot-branch/index.html#generation">generation 详解</a>说明了两个用途、实际递增入口、int64 / uint64 边界，以及保留或替换它所需的契约。</p></div>
+
 **结论要分开：`Sequence::reset()` 里的清理建议保留；prompt hash 失效处的清理属于防御性契约，当前常规调用链没有发现改写 prompt 内部的路径，可以讨论是否精简。**
 
 这里讨论的是两处新增的 `linear_prefix_checkpoint_.reset()`：它们只清掉 `Sequence` 私有的**“在哪里增加热点停点”的规划结果**，不会清空全局 prefix cache 或 DP 热点历史。`Sequence::reset()` 原有的 KV / Host 状态清理仍另行执行。以下是基于当前源码的判断，不把人为构造的单测等同于线上发生频率。
